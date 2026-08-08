@@ -1,10 +1,7 @@
 # Necromancer Client
 
 **Necromancer Client** is an open source DLL mod client for **Minecraft: Bedrock Edition (Windows 10/11)**. It hooks into the game at runtime and adds a polished in-game menu with **43 modules** covering combat, movement, visuals and quality-of-life tweaks, plus chat commands, per-module keybinds, config presets, and full HUD customization.
-
-- Runs on **Minecraft 1.26.3x** (Bedrock, Windows Store version)
 - Open source under the [LICENSE](LICENSE)
-- Not affiliated with Mojang or Microsoft
 
 > **Disclaimer:** This software modifies the game client. Using cheat-style modules (Aimbot, Triggerbot, Backtrack, etc.) on multiplayer servers can get you banned. Use at your own risk.
 
@@ -17,8 +14,8 @@
 | Requirement | Notes |
 |---|---|
 | Windows 10/11, 64-bit | The client only runs on Windows. |
-| Minecraft: Bedrock Edition **1.26.3x** | The Windows Store (UWP) build. The client checks the game version at startup and refuses unsupported versions. |
-| A DLL injector | Necromancer ships as `Necromancer.dll`, which has to be injected into `Minecraft.Windows.exe`. Use any Bedrock-compatible injector (e.g. [Jiayi](https://github.com/JiayiSoftware/JiayiLauncher) or Onix-style injectors). |
+| Minecraft: Bedrock Edition | The Windows Store build.
+| A DLL injector | Necromancer ships as `Necromancer.dll`, which has to be injected into `Minecraft.Windows.exe`. Use any Bedrock-compatible injector  |
 
 No other runtime dependencies — the VC++ runtime is statically linked into the DLL, and all fonts, images and translations are embedded.
 
@@ -81,7 +78,7 @@ Commands are sent through normal chat with a `.` prefix (changeable with `.setpr
 - **Environment Changer** — Changes visual features in the environment (time, weather, fog color).
 - **Freelook** — Look around freely without changing your movement direction.
 - **Zoom** — Zoom in and out bound to a key (cinematic camera, DPI adjust, hide hand).
-- **Anti OBS** — Renders ESP/arrows on a separate overlay so screen capture software can't record them.
+- **Anti OBS** — Renders ESP/arrows on a separate overlay so screen capture software can't record them (ghost client).
 
 #### HUD displays
 
