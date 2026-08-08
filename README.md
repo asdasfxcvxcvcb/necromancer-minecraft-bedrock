@@ -5,6 +5,15 @@
 
 > **Disclaimer:** This software modifies the game client. Using cheat-style modules (Aimbot, Triggerbot, Backtrack, etc.) on multiplayer servers can get you banned. Use at your own risk.
 
+<p align="center">
+  <img src="images/menu1.png" alt="Necromancer Client Menu Overview" width="48%" />
+  <img src="images/menu2.png" alt="Necromancer Client Modules Menu" width="48%" />
+</p>
+
+<p align="center">
+  <img src="images/if_state.PNG" alt="Interface State & HUD Display" width="97%" />
+</p>
+
 ---
 
 ## Running the DLL
