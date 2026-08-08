@@ -1,0 +1,116 @@
+﻿name: Necromancer Debug
+
+on:
+  push:
+    branches: ["master"]
+    paths:
+      - "**.cpp"
+      - "**.h"
+      - "**.hpp"
+      - "**CMakeLists.txt"
+      - "**.cmake"
+  pull_request:
+    branches: ["master"]
+    paths:
+      - "**.cpp"
+      - "**.h"
+      - "**.hpp"
+      - "**CMakeLists.txt"
+      - "**.cmake"
+  workflow_dispatch:
+
+env:
+  BUILD_CONFIGURATION: Debug
+  BUILD_DIR: cmake-build-debug
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Provides environment variables for MSVC-compatible linking
+      - name: Set up MSVC Developer Environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Install Ninja (GitHub Windows runner already has it, but we ensure fresh install)
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v3
+
+      - name: Compute build timestamp
+        id: build_timestamp
+        shell: bash
+        run: |
+          TS=$(date -u +"%Y-%m-%d_%H-%M-%SZ")
+          echo "TIMESTAMP=$TS" >> "$GITHUB_ENV"
+          echo "timestamp=$TS" >> "$GITHUB_OUTPUT"
+
+      - name: Configure CMake (MSVC cl.exe + Ninja)
+        run: |
+          $env:CC = "cl.exe"
+          $env:CXX = "cl.exe"
+          cmake -B ${{ env.BUILD_DIR }} -G Ninja `
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_CONFIGURATION }} `
+            -DCMAKE_C_COMPILER=cl.exe `
+            -DCMAKE_CXX_COMPILER=cl.exe `
+            -DNECROMANCER_BUILD_TIMESTAMP=${{ steps.build_timestamp.outputs.timestamp }}
+
+      # Build using Ninja. CMAKE_BUILD_TYPE selected the config at configure time.
+      - name: Build with Ninja
+        run: |
+          cmake --build ${{ env.BUILD_DIR }}
+
+      - name: Verify UTC build timestamp in DLL
+        shell: pwsh
+        run: |
+          $dllPath = "${{ github.workspace }}/${{ env.BUILD_DIR }}/NecromancerDebug.dll"
+          $expected = "${{ steps.build_timestamp.outputs.timestamp }}"
+          $contents = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($dllPath))
+          if (-not $contents.Contains($expected)) {
+            throw "Expected UTC build timestamp '$expected' was not embedded in $dllPath"
+          }
+
+      # P.S. Artifacts are retained for only 90 days.
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NecromancerDebug-${{ steps.build_timestamp.outputs.timestamp }}
+          path: |
+            ${{ github.workspace }}/${{ env.BUILD_DIR }}/NecromancerDebug.dll
+            ${{ github.workspace }}/${{ env.BUILD_DIR }}/NecromancerDebug.pdb
+          if-no-files-found: error
+
+      - name: Recreate debug release to refresh date
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete debug -y || true
+          git push origin :refs/tags/debug || true
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2.3.2
+        with:
+          tag_name: debug
+          name: Necromancer Debug
+          body: |
+            ### Latest Automated Debug Build
+
+            ⚠ Debug builds may contain bugs or be slow.
+
+            Includes:
+            - NecromancerDebug.dll
+            - NecromancerDebug.pdb
+          prerelease: true
+          make_latest: true
+          files: |
+            ${{ github.workspace }}/${{ env.BUILD_DIR }}/NecromancerDebug.dll
+            ${{ github.workspace }}/${{ env.BUILD_DIR }}/NecromancerDebug.pdb

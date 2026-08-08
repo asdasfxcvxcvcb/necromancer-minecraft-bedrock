@@ -1,0 +1,1 @@
+﻿target_precompile_headers(Necromancer PRIVATE pch.h)

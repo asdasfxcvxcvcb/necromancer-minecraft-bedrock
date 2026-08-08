@@ -1,0 +1,752 @@
+#include "pch.h"
+#include "Util.h"
+#include "mc/common/client/game/ClientInstance.h"
+#include "mc/common/resources/ResourcePackManager.h"
+#include "mc/common/world/Minecraft.h"
+#include "mc/common/client/renderer/game/LevelRendererPlayer.h"
+#include "mc/common/client/renderer/game/LevelRenderer.h"
+#include "client/Necromancer.h"
+#include "client/render/Renderer.h"
+
+#include <cctype>
+
+#ifdef min
+#undef min
+#undef max
+#endif
+
+namespace {
+    thread_local unsigned int necromancerSoundDepth = 0;
+
+    struct NecromancerSoundScope {
+        NecromancerSoundScope() { ++necromancerSoundDepth; }
+        ~NecromancerSoundScope() { --necromancerSoundDepth; }
+    };
+
+    std::string GetEnvironmentVariableUtf8(wchar_t const* name) {
+        wchar_t buffer[32767] = {};
+        auto length = GetEnvironmentVariableW(name, buffer, static_cast<DWORD>(std::size(buffer)));
+        if (length == 0 || length >= std::size(buffer)) {
+            return {};
+        }
+
+        return util::WStrToStr(std::wstring(buffer, length));
+    }
+
+    void ReplaceAllCaseInsensitive(std::string& text, std::string_view search, std::string_view replacement) {
+        if (search.empty()) {
+            return;
+        }
+
+        size_t offset = 0;
+        while (offset < text.size()) {
+            auto found = std::search(text.begin() + static_cast<std::ptrdiff_t>(offset), text.end(), search.begin(),
+                                     search.end(), [](char lhs, char rhs) {
+                                         return std::tolower(static_cast<unsigned char>(lhs)) ==
+                                                std::tolower(static_cast<unsigned char>(rhs));
+                                     });
+
+            if (found == text.end()) {
+                break;
+            }
+
+            auto position = static_cast<size_t>(std::distance(text.begin(), found));
+            text.replace(position, search.size(), replacement);
+            offset = position + replacement.size();
+        }
+    }
+
+    void AddPathRedaction(std::vector<std::pair<std::string, std::string>>& redactions, std::string const& path,
+                          std::string token) {
+        if (path.empty()) {
+            return;
+        }
+
+        // extended length paths appear in crash reports as \\?\C:\...
+        redactions.emplace_back("\\\\?\\" + path, token);
+        redactions.emplace_back(path, token);
+
+        std::string forwardSlashPath = path;
+        std::replace(forwardSlashPath.begin(), forwardSlashPath.end(), '\\', '/');
+        redactions.emplace_back("//?/" + forwardSlashPath, token);
+        redactions.emplace_back(std::move(forwardSlashPath), std::move(token));
+    }
+
+    std::vector<std::pair<std::string, std::string>> BuildPrivatePathRedactions() {
+        std::vector<std::pair<std::string, std::string>> redactions;
+
+        // replaces the most specific roots first so appdata paths don't become
+        // the stupid %USERPROFILE%\AppData\... form.
+        AddPathRedaction(redactions, GetEnvironmentVariableUtf8(L"LOCALAPPDATA"), "%LOCALAPPDATA%");
+        AddPathRedaction(redactions, GetEnvironmentVariableUtf8(L"APPDATA"), "%APPDATA%");
+        AddPathRedaction(redactions, GetEnvironmentVariableUtf8(L"USERPROFILE"), "%USERPROFILE%");
+
+        return redactions;
+    }
+}
+
+namespace util {
+    namespace detail {
+        template<typename T>
+        class ListOr : public std::list<T> {
+        public:
+            ListOr(T const& item)
+                : std::list<T>({ item }) {}
+            ListOr(std::initializer_list<T> list)
+                : std::list<T>(list) {}
+        };
+    }
+
+    std::unordered_map<size_t, const char*> KeyNames = {
+        { 0, "None" },
+        { 0x1, "Mouse 1" },
+        { 0x2, "Mouse 2" },
+        { 0x4, "Mouse 3" },
+        { 0x5, "Mouse 4" },
+        { 0x6, "Mouse 5" },
+        { 0x8, "Backspace" },
+        { 0x9, "Tab" },
+        { 0xC, "Clear" },
+        { 0xD, "Return" },
+        { 0x10, "Shift" },
+        { 0x11, "Ctrl" },
+        { 0x12, "Alt" },
+        { 0x13, "Pause" },
+        { 0x14, "CapsLock" },
+        { 0x15, "Kana" },
+        { 0x16, "IME On" },
+        { 0x17, "Junja" },
+        { 0x18, "Final" },
+        { 0x19, "Hanja" },
+        { 0x1A, "IME Off" },
+        { 0x1B, "Escape" },
+        { 0x20, "Space" },
+        { 0x21, "PageUp" },
+        { 0x22, "PageDown" },
+        { 0x23, "End" },
+        { 0x24, "Home" },
+        { 0x25, "Left" },
+        { 0x26, "Up" },
+        { 0x27, "Right" },
+        { 0x28, "Down" },
+        { 0x29, "Select" },
+        { 0x2A, "Print" },
+        { 0x2B, "Execute" },
+        { 0x2C, "PrintScreen" },
+        { 0x2D, "Insert" },
+        { 0x2E, "Delete" },
+        { 0x2F, "Help" },
+        { 0x30, "0" },
+        { 0x31, "1" },
+        { 0x32, "2" },
+        { 0x33, "3" },
+        { 0x34, "4" },
+        { 0x35, "5" },
+        { 0x36, "6" },
+        { 0x37, "7" },
+        { 0x38, "8" },
+        { 0x39, "9" },
+
+        // A-Z calculated automatically
+
+        { 0x5B, "Windows" },
+        { 0x5C, "RightWindows" },
+        { 0x5D, "Applications" },
+        { 0x5F, "Sleep" },
+        { 0x60, "Numpad0" },
+        { 0x61, "Numpad1" },
+        { 0x62, "Numpad2" },
+        { 0x63, "Numpad3" },
+        { 0x64, "Numpad4" },
+        { 0x65, "Numpad5" },
+        { 0x66, "Numpad6" },
+        { 0x67, "Numpad7" },
+        { 0x68, "Numpad8" },
+        { 0x69, "Numpad9" },
+        { 0x6A, "Multiply" },
+        { 0x6B, "Add" },
+        { 0x6C, "Separator" },
+        { 0x6D, "Subtract" },
+        { 0x6E, "Decimal" },
+        { 0x6F, "Divide" },
+
+        { 0x70, "F1" },
+        { 0x71, "F2" },
+        { 0x72, "F3" },
+        { 0x73, "F4" },
+        { 0x74, "F5" },
+        { 0x75, "F6" },
+        { 0x76, "F7" },
+        { 0x77, "F8" },
+        { 0x78, "F9" },
+        { 0x79, "F10" },
+        { 0x7A, "F11" },
+        { 0x7B, "F12" },
+        { 0x7C, "F13" },
+        { 0x7D, "F14" },
+        { 0x7E, "F15" },
+        { 0x7F, "F16" },
+        { 0x80, "F17" },
+        { 0x81, "F18" },
+        { 0x82, "F19" },
+        { 0x83, "F20" },
+        { 0x84, "F21" },
+        { 0x85, "F22" },
+        { 0x86, "F23" },
+        { 0x87, "F24" },
+
+        { 0x90, "NumLock" },
+        { 0x91, "ScrollLock" },
+        { 0xA2, "LCtrl" },
+        { 0xA3, "RCtrl" },
+        { 0xAD, "VolumeMute" },
+        { 0xAE, "VolumeDown" },
+        { 0xAF, "VolumeUp" },
+        { 0xB0, "NextTrack" },
+        { 0xB1, "PrevTrack" },
+        { 0xB2, "MediaStop" },
+        { 0xB3, "PlayPause" },
+        { 0xB4, "LaunchMail" },
+    };
+}
+
+std::filesystem::path util::GetRootPath() {
+    wchar_t buf[MAX_PATH] {};
+    const auto res = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
+
+    if (res > 0) return std::wstring(buf, res);
+
+    return std::wstring();
+}
+
+std::filesystem::path util::GetRoamingPath() {
+    wchar_t buf[MAX_PATH] {};
+    const auto res = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
+
+    if (res > 0) return std::wstring(buf, res);
+
+    return std::wstring();
+}
+
+std::filesystem::path util::GetNecromancerPath() {
+    return std::filesystem::path(L"C:\\necromancer_mcbe");
+}
+
+std::wstring util::StrToWStr(std::string const& s) {
+    if (s.empty()) return {};
+
+    int slength = static_cast<int>(s.length());
+    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), slength, nullptr, 0);
+    if (len <= 0) return {};
+
+    std::wstring r;
+    r.resize(len);
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), slength, r.data(), len);
+    return r;
+}
+
+std::string util::WStrToStr(std::wstring const& ws) {
+    std::string ret;
+    int len = WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), static_cast<int>(ws.size()), NULL, 0, NULL, NULL);
+    if (len > 0) {
+        ret.resize(len);
+        WideCharToMultiByte(CP_UTF8, 0, ws.c_str(), static_cast<int>(ws.size()), &ret[0], len, NULL, NULL);
+    }
+    return ret;
+}
+
+std::string util::RedactPrivatePaths(std::string text) {
+    static auto const redactions = BuildPrivatePathRedactions();
+    for (auto const& [path, token] : redactions) {
+        ReplaceAllCaseInsensitive(text, path, token);
+    }
+
+    return text;
+}
+
+std::string util::Format(std::string const& s) {
+    std::string out;
+
+    for (auto& ch : s) {
+        if (ch == '&') {
+            out += "\xC2\xA7";
+        } else
+            out += ch;
+    }
+    return out;
+}
+
+std::wstring util::WFormat(std::wstring const& s) {
+    std::wstring out;
+
+    for (auto& ch : s) {
+        if (ch == L'&') {
+            out += L'\u00A7';
+        } else
+            out += ch;
+    }
+    return out;
+}
+
+bool util::IsMinecraftFormattingCode(wchar_t code) {
+    code = NormalizeMinecraftFormattingCode(code);
+    return (code >= L'0' && code <= L'9') || (code >= L'a' && code <= L'f') || (code >= L'k' && code <= L'o') ||
+           code == L'r';
+}
+
+wchar_t util::NormalizeMinecraftFormattingCode(wchar_t code) {
+    if (code >= L'A' && code <= L'Z') {
+        return static_cast<wchar_t>(code - L'A' + L'a');
+    }
+    return code;
+}
+
+std::vector<util::MinecraftFormatRun> util::ParseMinecraftFormatting(std::wstring const& text) {
+    std::vector<MinecraftFormatRun> runs;
+    std::wstring currentText;
+    wchar_t currentColor = L'\0';
+
+    auto flush = [&]() {
+        if (!currentText.empty()) {
+            runs.push_back(MinecraftFormatRun { std::move(currentText), currentColor });
+            currentText.clear();
+        }
+    };
+
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == L'\u00A7' && i + 1 < text.size() && IsMinecraftFormattingCode(text[i + 1])) {
+            wchar_t code = NormalizeMinecraftFormattingCode(text[i + 1]);
+            flush();
+
+            if ((code >= L'0' && code <= L'9') || (code >= L'a' && code <= L'f')) {
+                currentColor = code;
+            } else if (code == L'r') {
+                currentColor = L'\0';
+            }
+
+            ++i;
+            continue;
+        }
+
+        currentText.push_back(text[i]);
+    }
+
+    flush();
+    return runs;
+}
+
+std::wstring util::StripMinecraftFormatting(std::wstring const& text) {
+    std::wstring out;
+    out.reserve(text.size());
+
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == L'\u00A7' && i + 1 < text.size() && IsMinecraftFormattingCode(text[i + 1])) {
+            ++i;
+            continue;
+        }
+        out.push_back(text[i]);
+    }
+
+    return out;
+}
+
+d2d::Color util::MinecraftFormattingColor(wchar_t code, d2d::Color const& fallback) {
+    auto withAlpha = [&](d2d::Color color) {
+        return color.asAlpha(fallback.a);
+    };
+
+    switch (NormalizeMinecraftFormattingCode(code)) {
+    case L'0':
+        return withAlpha(d2d::Color::RGB(0, 0, 0));
+    case L'1':
+        return withAlpha(d2d::Color::RGB(0, 0, 170));
+    case L'2':
+        return withAlpha(d2d::Color::RGB(0, 170, 0));
+    case L'3':
+        return withAlpha(d2d::Color::RGB(0, 170, 170));
+    case L'4':
+        return withAlpha(d2d::Color::RGB(170, 0, 0));
+    case L'5':
+        return withAlpha(d2d::Color::RGB(170, 0, 170));
+    case L'6':
+        return withAlpha(d2d::Color::RGB(255, 170, 0));
+    case L'7':
+        return withAlpha(d2d::Color::RGB(170, 170, 170));
+    case L'8':
+        return withAlpha(d2d::Color::RGB(85, 85, 85));
+    case L'9':
+        return withAlpha(d2d::Color::RGB(85, 85, 255));
+    case L'a':
+        return withAlpha(d2d::Color::RGB(85, 255, 85));
+    case L'b':
+        return withAlpha(d2d::Color::RGB(85, 255, 255));
+    case L'c':
+        return withAlpha(d2d::Color::RGB(255, 85, 85));
+    case L'd':
+        return withAlpha(d2d::Color::RGB(255, 85, 255));
+    case L'e':
+        return withAlpha(d2d::Color::RGB(255, 255, 85));
+    case L'f':
+        return withAlpha(d2d::Color::RGB(255, 255, 255));
+    default:
+        return fallback;
+    }
+}
+
+std::wstring util::FormatWString(std::wstring const& formatString, std::vector<std::wstring> const& formatArgs) {
+    std::wstringstream result;
+    size_t argIndex = 0;
+    size_t pos = 0;
+
+    while (pos < formatString.length()) {
+        if (formatString[pos] == L'{' && (pos + 1 < formatString.length()) && formatString[pos + 1] == L'}') {
+            if (argIndex >= formatArgs.size()) {
+                throw std::invalid_argument("Not enough arguments provided for the format string.");
+            }
+            result << formatArgs[argIndex++];
+            pos += 2; // Skip over the "{}"
+        } else {
+            result << formatString[pos++];
+        }
+    }
+
+    if (argIndex < formatArgs.size()) {
+        throw std::invalid_argument("Too many arguments provided for the format string.");
+    }
+
+    return result.str();
+}
+
+std::wstring util::GetClipboardText() {
+    // Try opening the clipboard
+    if (!OpenClipboard(nullptr)) {
+        return L"";
+    }
+
+    // Get handle of clipboard object for ANSI text
+    HANDLE hData = GetClipboardData(CF_UNICODETEXT);
+    if (hData == nullptr) return L"";
+
+    // Lock the handle to get the actual text pointer
+    wchar_t* pszText = static_cast<wchar_t*>(GlobalLock(hData));
+    if (pszText == nullptr) return L"";
+
+    // Save text in a string class instance
+    std::wstring text(pszText);
+
+    // Release the lock
+    GlobalUnlock(hData);
+
+    // Release the clipboard
+    CloseClipboard();
+
+    return text;
+}
+
+void util::SetClipboardText(std::wstring const& text) {
+    if (OpenClipboard(NULL)) {
+        EmptyClipboard();
+        HGLOBAL hg = GlobalAlloc(GMEM_MOVEABLE, (text.size() * 2) + 1); // \0
+        if (!hg) {
+            CloseClipboard();
+        } else {
+            memcpy(GlobalLock(hg), text.c_str(), (text.size() * 2) + 1);
+            GlobalUnlock(hg);
+            SetClipboardData(CF_UNICODETEXT, hg);
+            CloseClipboard();
+            GlobalFree(hg);
+        }
+    }
+}
+
+std::string util::KeyToString(int key) {
+    if (key > 0x40 && key < 0x5B) {
+        return std::string(1, (char)key);
+    }
+
+    auto it = KeyNames.find(key);
+    if (it == KeyNames.end()) {
+        return "Unknown";
+    }
+
+    return it->second;
+}
+
+int util::StringToKey(std::string const& s) {
+    if (s.empty()) return 0;
+    if (s[0] > 0x40 && s[0] < 0x5B) {
+        return (int)s[0];
+    }
+
+    for (auto& ent : KeyNames) {
+        if (ToLower(ent.second) == ToLower(s)) return static_cast<int>(ent.first);
+    }
+    return 0;
+}
+
+std::string util::ToLower(std::string const& s) {
+    std::string ret = s;
+    std::transform(ret.begin(), ret.end(), ret.begin(), ::tolower);
+    return ret;
+}
+
+std::string util::ToUpper(std::string const& s) {
+    std::string ret = s;
+    std::transform(ret.begin(), ret.end(), ret.begin(), [](char c) {
+        return c - (char)20;
+    });
+    return ret;
+}
+
+std::vector<std::string> util::SplitString(std::string const& s, char delim) {
+    std::vector<std::string> ret = {};
+    std::string word = "";
+
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == delim) {
+            ret.push_back(word);
+            word = "";
+            continue;
+        }
+        word += s[i];
+    }
+
+    if (word.size() > 0) {
+        ret.push_back(word);
+    }
+
+    return ret;
+}
+
+void util::PlaySoundUI(std::string const& sound, float volume, float pitch) {
+    auto cInst = SDK::ClientInstance::get();
+    auto lr = cInst->levelRenderer;
+    if (lr) {
+        NecromancerSoundScope scope;
+        cInst->minecraft->getLevel()->playSoundEvent(sound, lr->getLevelRendererPlayer()->getOrigin(), volume, pitch);
+    } // TODO: make it work outside world
+}
+
+bool util::IsPlayingNecromancerSound() noexcept {
+    return necromancerSoundDepth != 0;
+}
+
+Color util::LerpColorState(Color const& current, Color const& on, Color const& off, bool state, float speed) {
+    Color ret = current;
+    float t = Necromancer::getRenderer().getDeltaTime() * (speed / 10.f);
+    ret.r = std::lerp(current.r, state ? on.r : off.r, t);
+    ret.g = std::lerp(current.g, state ? on.g : off.g, t);
+    ret.b = std::lerp(current.b, state ? on.b : off.b, t);
+    ret.a = std::lerp(current.a, state ? on.a : off.a, t);
+    return ret;
+}
+
+HSV util::ColorToHSV(Color const& color) {
+    HSV hsv { 0.f, 0.f, 0.f };
+
+    float minVal = std::min(color.r, std::min(color.g, color.b));
+    float maxVal = std::max(color.r, std::max(color.g, color.b));
+    float delta = maxVal - minVal;
+
+    hsv.v = maxVal;
+
+    if (delta == 0) {
+        hsv.h = 0;
+        hsv.s = 0;
+    } else {
+        hsv.s = delta / maxVal;
+
+        if (color.r == maxVal) {
+            hsv.h = (color.g - color.b) / delta;
+        } else if (color.g == maxVal) {
+            hsv.h = 2 + (color.b - color.r) / delta;
+        } else {
+            hsv.h = 4 + (color.r - color.g) / delta;
+        }
+
+        hsv.h *= 60;
+
+        if (hsv.h < 0) {
+            hsv.h += 360;
+        }
+    }
+
+    return hsv;
+}
+
+Color util::HSVToColor(HSV const& hsv) {
+    Color color;
+    color.a = 1.f;
+    float hue = hsv.h;
+    while (hue >= 360.f)
+        hue -= 360.f;
+
+    if (hsv.s == 0) {
+        // grayscale
+        color.r = hsv.v;
+        color.g = hsv.v;
+        color.b = hsv.v;
+    } else {
+        int i = static_cast<int>(std::floor(hue / 60.f));
+        float f = hue / 60.f - i;
+        float p = hsv.v * (1.f - hsv.s);
+        float q = hsv.v * (1.f - hsv.s * f);
+        float t = hsv.v * (1.f - hsv.s * (1.f - f));
+
+        switch (i) {
+        case 0:
+            color.r = hsv.v;
+            color.g = t;
+            color.b = p;
+            break;
+        case 1:
+            color.r = q;
+            color.g = hsv.v;
+            color.b = p;
+            break;
+        case 2:
+            color.r = p;
+            color.g = hsv.v;
+            color.b = t;
+            break;
+        case 3:
+            color.r = p;
+            color.g = q;
+            color.b = hsv.v;
+            break;
+        case 4:
+            color.r = t;
+            color.g = p;
+            color.b = hsv.v;
+            break;
+        default:
+            color.r = hsv.v;
+            color.g = p;
+            color.b = q;
+            break;
+        }
+    }
+
+    return color;
+}
+
+Vec4 util::RotToQuaternion(Vec2 const& rot) {
+    constexpr float invRadDegrees = pi_f / 180.f;
+
+    float pitch = rot.x * invRadDegrees;
+    float yaw = rot.y * invRadDegrees;
+    float roll = 0.f;
+
+    float cx = std::cos(pitch * 0.5f);
+    float sx = std::sin(pitch * 0.5f);
+    float cy = std::cos(yaw * 0.5f);
+    float sy = std::sin(yaw * 0.5f);
+    float cz = std::cos(roll * 0.5f);
+    float sz = std::sin(roll * 0.5f);
+
+    return Vec4 {
+        (cx * cy * sz) - (sx * sy * cz), // quat.x
+        (cx * cy * cz) + (sx * sy * sz), // quat.y
+        (sx * cy * cz) - (cx * sy * sz), // quat.z
+        (cx * sy * cz) + (sx * cy * sz)  // quat.w
+    };
+}
+
+Vec2 util::QuaternionToRot(const Vec4& quat) {
+    constexpr float radDegrees = 180.f / pi_f;
+
+    float pitch = 0.f;
+    float yaw = 0.f;
+    [[maybe_unused]] float roll = 0.f;
+
+    // roll (x-axis rotation)
+    float sinr_cosp = 2.f * (quat.x * quat.y + quat.z * quat.w);
+    float cosr_cosp = 1.f - (2.f * (quat.y * quat.y + quat.z * quat.z));
+    roll = std::atan2(sinr_cosp, cosr_cosp);
+
+    // pitch (y-axis rotation)
+    float sinp = 2.f * (quat.y * quat.w - quat.x * quat.z);
+    if (std::abs(sinp) >= 1.f) {
+        pitch = std::copysign(pi_f / 2.f, sinp); // use 90 degrees if out of range
+    } else {
+        pitch = std::asin(sinp);
+    }
+
+    // yaw (z-axis rotation)
+    float siny_cosp = 2.f * (quat.x * quat.w + quat.y * quat.z);
+    float cosy_cosp = 1.f - (2.f * (quat.z * quat.z + quat.w * quat.w));
+    yaw = std::atan2(siny_cosp, cosy_cosp);
+
+    return Vec2 { pitch * radDegrees, yaw * radDegrees };
+}
+
+void util::KeepInBounds(d2d::Rect& targ, d2d::Rect const& bounds) {
+    if (targ.left < bounds.left) {
+        Vec2 modPos = targ.getPos();
+        targ.setPos({ bounds.left, modPos.y });
+    }
+
+    if (targ.top < bounds.top) {
+        Vec2 modPos = targ.getPos();
+        targ.setPos({ modPos.x, bounds.top });
+    }
+
+    if (targ.right > bounds.right) {
+        Vec2 modPos = targ.getPos();
+        targ.setPos({ bounds.right - targ.getWidth(), modPos.y });
+    }
+
+    if (targ.bottom > bounds.bottom) {
+        Vec2 modPos = targ.getPos();
+        targ.setPos({ modPos.x, bounds.bottom - targ.getHeight() });
+    }
+}
+
+std::string util::GetProcessorInfo() {
+    constexpr std::array<int, 3> cpuIds = { static_cast<int>(0x80000002), static_cast<int>(0x80000003),
+                                            static_cast<int>(0x80000004) };
+    std::array<int, 4 + 1> data {}; // the extra int is to accommodate for the null terminator
+    std::string model;
+
+#ifdef __clang__
+    for (auto& id : cpuIds) {
+        __asm__ __volatile__("cpuid" : "=a"(data[0]), "=b"(data[1]), "=c"(data[2]), "=d"(data[3]) : "a"(id));
+        model += std::string(reinterpret_cast<const char*>(data.data()));
+    }
+#else
+    for (auto& id : cpuIds) {
+        __cpuid(data.data(), id);
+        model += std::string(reinterpret_cast<const char*>(data.data()));
+    }
+#endif
+
+    return model;
+}
+
+bool util::TryGetGameTextureBuffer(std::string const& texturePath, std::string& buffer) {
+    buffer.clear();
+
+    auto clientInstance = SDK::ClientInstance::get();
+    if (!clientInstance) {
+        return false;
+    }
+
+    for (auto fileSystem : { SDK::ResourceFileSystem::UserPackage, SDK::ResourceFileSystem::AppPackage }) {
+        SDK::ResourceLocation location(fileSystem);
+        location.mPath->value = texturePath;
+        buffer.clear();
+
+        if (clientInstance->getResourcePackManager().load(location, buffer)) {
+            return true;
+        }
+    }
+
+    buffer.clear();
+    return false;
+}
+
+std::string util::GetGameTextureBuffer(std::string const& texturePath) {
+    std::string buffer;
+    TryGetGameTextureBuffer(texturePath, buffer);
+    return buffer;
+}

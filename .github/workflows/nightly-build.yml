@@ -1,0 +1,118 @@
+﻿name: Necromancer Nightly
+
+on:
+  push:
+    branches: ["master"]
+    paths:
+      - "**.cpp"
+      - "**.h"
+      - "**.hpp"
+      - "**CMakeLists.txt"
+      - "**.cmake"
+  pull_request:
+    branches: ["master"]
+    paths:
+      - "**.cpp"
+      - "**.h"
+      - "**.hpp"
+      - "**CMakeLists.txt"
+      - "**.cmake"
+  workflow_dispatch:
+
+env:
+  BUILD_CONFIGURATION: Nightly
+  BUILD_DIR: cmake-build-nightly
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Provides environment variables for MSVC-compatible linking
+      - name: Set up MSVC Developer Environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Install Ninja (GitHub Windows runner already has it, but we ensure fresh install)
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v3
+
+      - name: Compute build timestamp
+        id: build_timestamp
+        shell: bash
+        run: |
+          TS=$(date -u +"%Y-%m-%d_%H-%M-%SZ")
+          echo "TIMESTAMP=$TS" >> "$GITHUB_ENV"
+          echo "timestamp=$TS" >> "$GITHUB_OUTPUT"
+
+      # Configure using Ninja + MSVC cl.exe. Keep this aligned with CMakePresets.json;
+      # packet hooks write into Minecraft-owned STL objects, so clang-cl builds can
+      # differ enough to break chat packet handling at runtime.
+      - name: Configure CMake (MSVC cl.exe + Ninja)
+        run: |
+          $env:CC = "cl.exe"
+          $env:CXX = "cl.exe"
+          cmake -B ${{ env.BUILD_DIR }} -G Ninja `
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_CONFIGURATION }} `
+            -DCMAKE_C_COMPILER=cl.exe `
+            -DCMAKE_CXX_COMPILER=cl.exe `
+            -DNECROMANCER_BUILD_TIMESTAMP=${{ steps.build_timestamp.outputs.timestamp }}
+
+      # Build using Ninja. CMAKE_BUILD_TYPE selected the config at configure time.
+      - name: Build with Ninja
+        run: |
+          cmake --build ${{ env.BUILD_DIR }}
+
+      - name: Verify UTC build timestamp in DLL
+        shell: pwsh
+        run: |
+          $dllPath = "${{ github.workspace }}/${{ env.BUILD_DIR }}/NecromancerNightly.dll"
+          $expected = "${{ steps.build_timestamp.outputs.timestamp }}"
+          $contents = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($dllPath))
+          if (-not $contents.Contains($expected)) {
+            throw "Expected UTC build timestamp '$expected' was not embedded in $dllPath"
+          }
+
+      # P.S. Artifacts are retained for only 90 days.
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: NecromancerNightly-${{ steps.build_timestamp.outputs.timestamp }}
+          path: |
+            ${{ github.workspace }}/${{ env.BUILD_DIR }}/NecromancerNightly.dll
+          if-no-files-found: error
+
+      - name: Recreate nightly release to refresh date
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete nightly -y || true
+          git push origin :refs/tags/nightly || true
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2.3.2
+        with:
+          tag_name: nightly
+          name: Necromancer Nightly
+          body: |
+            ### This is an automated, experimental DLL build of Necromancer Client.
+
+            **This release has a high chance of containing bugs or crashes.**
+
+            Includes:
+            - Nightly build (NecromancerNightly.dll)
+            - Debug symbols (NecromancerNightly.pdb)
+          prerelease: true
+          make_latest: true
+          files: |
+            ${{ github.workspace }}/${{ env.BUILD_DIR }}/NecromancerNightly.dll
+            ${{ github.workspace }}/${{ env.BUILD_DIR }}/NecromancerNightly.pdb

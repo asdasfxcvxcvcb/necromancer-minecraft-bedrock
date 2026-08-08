@@ -1,0 +1,242 @@
+﻿#pragma once
+#include <array>
+#include <atomic>
+#include <mutex>
+#include <string_view>
+#include "client/event/Listener.h"
+#include "client/feature/setting/Setting.h"
+#include <optional>
+#include "misc/Timings.h"
+#include "misc/Notifications.h"
+#include "misc/NameTagCache.h"
+#include "localization/LocalizeData.h"
+
+namespace ui {
+    class TextBox;
+}
+
+namespace sdk {
+    class Font;
+}
+
+class Necromancer final : public Listener {
+public:
+    [[nodiscard]] static Necromancer& get() noexcept;
+
+    [[nodiscard]] static class ModuleManager& getModuleManager() noexcept;
+    [[nodiscard]] static class CommandManager& getCommandManager() noexcept;
+    [[nodiscard]] static class ConfigManager& getConfigManager() noexcept;
+    [[nodiscard]] static class ClientMessageQueue& getClientMessageQueue() noexcept;
+    [[nodiscard]] static class SettingGroup& getSettings() noexcept;
+    [[nodiscard]] static class NecromancerHooks& getHooks() noexcept;
+    [[nodiscard]] static class Eventing& getEventing() noexcept;
+    [[nodiscard]] static class Renderer& getRenderer() noexcept;
+    [[nodiscard]] static class ScreenManager& getScreenManager() noexcept;
+    [[nodiscard]] static class Assets& getAssets() noexcept;
+    [[nodiscard]] static class Keyboard& getKeyboard() noexcept;
+    [[nodiscard]] static class Notifications& getNotifications() noexcept;
+
+    [[nodiscard]] LocalizeData& getL10nData() noexcept { return *l10nData; }
+    [[nodiscard]] Timings& getTimings() noexcept { return timings; }
+    [[nodiscard]] NameTagCache& getNameTagCache() noexcept { return nameTagCache; }
+    [[nodiscard]] std::string getCommandPrefix() { return util::WStrToStr(std::get<TextValue>(commandPrefix).str); }
+    [[nodiscard]] int getSelectedLanguage();
+
+    void queueEject() noexcept;
+    [[nodiscard]] bool isEjectQueued() const noexcept;
+    [[nodiscard]] bool isEjectReadyForRenderThread() const noexcept;
+    void completeEjectFromRenderThread() noexcept;
+    [[nodiscard]] bool prepareForUnload(HMODULE module) noexcept;
+    void setRenderHookActive(bool active) noexcept;
+    [[nodiscard]] bool isRenderHookActive() const noexcept;
+    void initialize(HINSTANCE hInst);
+
+    void initLanguageSetting();
+    void initSettings();
+    void onLanguageChanged();
+
+    void queueForUIRender(std::function<void(SDK::MinecraftUIRenderContext* ctx)> callback);
+    void queueForClientThread(std::function<void()> callback);
+    void queueForDXRender(std::function<void(ID2D1DeviceContext* ctx)> callback);
+    void deferD2DResourceRelease(IUnknown* resource) noexcept;
+    void releaseDeferredD2DResources() noexcept;
+
+    Necromancer() = default;
+    ~Necromancer() = default;
+
+    static constexpr std::string_view version = "v2.8.1";
+    static constexpr std::array<std::string_view, 1> supportedMinecraftVersions = {
+        "1.26.3x",
+    };
+
+    [[nodiscard]] static constexpr bool supportsMinecraftVersion(std::string_view version) noexcept {
+        for (const auto supportedVersion : supportedMinecraftVersions) {
+            if (supportedVersion.size() != version.size()) {
+                continue;
+            }
+
+            bool matches = true;
+            for (std::size_t i = 0; i < supportedVersion.size(); ++i) {
+                const auto patternCharacter = supportedVersion[i];
+                const auto versionCharacter = version[i];
+
+                if ((patternCharacter == 'x' || patternCharacter == 'X') && versionCharacter >= '0' &&
+                    versionCharacter <= '9') {
+                    continue;
+                }
+
+                if (patternCharacter != versionCharacter) {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    HINSTANCE dllInst = NULL;
+    std::string gameVersion;
+
+    std::optional<float> getMenuBlur();
+
+    void addTextBox(TextBox* box) { textBoxes.push_back(box); }
+
+    void removeTextBox(TextBox* box) {
+        for (auto it = textBoxes.begin(); it != textBoxes.end(); ++it) {
+            if (*it == box) {
+                textBoxes.erase(it);
+                break;
+            }
+        }
+    }
+
+    std::vector<std::string> getNecromancerUsers();
+
+    [[nodiscard]] KeyValue getMenuKey() { return std::get<KeyValue>(menuKey); }
+
+    [[nodiscard]] KeyValue getSecondaryMenuKey() { return std::get<KeyValue>(secondaryMenuKey); }
+
+    [[nodiscard]] ColorValue getAccentColor() { return std::get<ColorValue>(accentColor); }
+
+    [[nodiscard]] bool shouldForceDX11() { return std::get<BoolValue>(useDX11); }
+
+    [[nodiscard]] bool shouldForceDisableVSync() { return std::get<BoolValue>(forceDisableVSync); }
+
+    [[nodiscard]] bool shoulBlurHUD() { return std::get<BoolValue>(hudBlur); }
+
+    [[nodiscard]] struct ID2D1BitmapBrush1* getHUDBlurBrush() { return hudBlurBrush.Get(); }
+
+    [[nodiscard]] bool useMinecraftRenderer() { return false; }
+
+    [[nodiscard]] int getHUDFontMode() { return hudFontMode.getSelectedKey(); }
+
+    void setHUDFontMode(int key) { hudFontMode.setSelectedKey(key); }
+
+    void applyHUDFontFamily();
+
+    [[nodiscard]] bool shouldRenderTextShadows() { return std::get<BoolValue>(textShadow); }
+
+#ifdef NECROMANCER_DEBUG
+    [[nodiscard]] bool shouldRenderDebugTextRects() { return std::get<BoolValue>(debugTextRects); }
+#endif
+
+    [[nodiscard]] bool getDoSnapLines() { return std::get<BoolValue>(snapLines); }
+
+    [[nodiscard]] SDK::Font* getFont();
+
+    void fetchNecromancerUsers();
+    std::wstring GetCurrentModuleFilePath(HMODULE hModule);
+    static std::string getBuildTimestamp();
+
+    void writeServerIP();
+
+    void initL10n();
+
+    void loadLanguageConfig(std::shared_ptr<Setting> languageSetting);
+    void loadConfig(class SettingGroup& resolvedGroup);
+    float getRGBHue() const { return rgbHue; }
+
+    static bool isMainThread() { return std::this_thread::get_id() == gameThreadId; }
+
+private:
+    std::optional<LocalizeData> l10nData;
+
+    std::vector<std::string> necromancerUsers;
+    std::vector<std::string> necromancerUsersDirty;
+
+    std::queue<std::function<void(SDK::MinecraftUIRenderContext* ctx)>> uiRenderQueue;
+    std::queue<std::function<void(ID2D1DeviceContext* ctx)>> dxRenderQueue;
+    std::queue<std::function<void()>> clientThreadQueue;
+    std::mutex deferredD2DReleaseMutex;
+    std::vector<IUnknown*> deferredD2DReleases;
+
+    Timings timings {};
+    NameTagCache nameTagCache;
+    inline static std::optional<std::thread::id> gameThreadId;
+
+    ValueType commandPrefix = TextValue(L".");
+    ValueType menuKey = KeyValue(VK_INSERT);
+    ValueType secondaryMenuKey = KeyValue(VK_F10);
+    ValueType ejectKey = KeyValue(VK_END);
+    ValueType hudBlur = BoolValue(false);
+    ValueType hudBlurIntensity = FloatValue(10.f);
+    ValueType menuBlurEnabled = BoolValue(true);
+    // TODO: add disabled settings, for people who already only support dx11, gray it out
+    ValueType useDX11 = BoolValue(false);
+    ValueType forceDisableVSync = BoolValue(false);
+    ValueType menuBlur = FloatValue(20.f);
+    ValueType accentColor = ColorValue(static_cast<float>(0x32) / 255.f, static_cast<float>(0x39) / 255.f,
+                                       static_cast<float>(0x76) / 255.f);
+    ValueType minimalViewBob = BoolValue(false);
+    ValueType textShadow = BoolValue(true);
+#ifdef NECROMANCER_DEBUG
+    ValueType debugTextRects = BoolValue(false);
+#endif
+    ValueType centerCursorMenus = BoolValue(false);
+    ValueType snapLines = BoolValue(true);
+    ValueType secondaryFont = TextValue(L"Segoe UI");
+    ValueType rgbSpeed = FloatValue(1.f);
+
+    EnumData hudFontMode;
+    EnumData clientLanguage;
+
+    std::vector<TextBox*> textBoxes;
+    ComPtr<struct ID2D1Bitmap1> hudBlurBitmap;
+    ComPtr<struct ID2D1BitmapBrush1> hudBlurBrush;
+    ComPtr<struct ID2D1Effect> gaussianBlurEffect;
+
+    float rgbHue = 0.f;
+
+    void threadsafeInit();
+    void patchKey();
+
+    void updateModuleBlocking();
+
+    void onUpdate(class Event& ev);
+    void onKey(class Event& ev);
+    void onClick(class Event& ev);
+    void onChar(class Event& ev);
+    void onRendererInit(class Event& ev);
+    void onRendererCleanup(class Event& ev);
+    void onFocusLost(class Event& ev);
+    void onSuspended(class Event& ev);
+    void onBobView(class Event& ev);
+    void onLeaveGame(class Event& ev);
+    void onRenderLayer(class Event& ev);
+    void onRenderOverlay(class Event& ev);
+    void onPacketReceive(class Event& ev);
+    void onTick(class Event& ev);
+    void onMouseRelease(class Event& ev);
+
+    std::atomic_bool shouldEject = false;
+    std::atomic_bool mainThreadEjectCleanupComplete = false;
+    std::atomic_bool unloadStarted = false;
+    std::atomic_bool renderHookActive = false;
+    std::atomic_bool unloadPrepared = false;
+    std::array<bool, 256> pressedKeys {};
+    bool hasInit = false;
+};
