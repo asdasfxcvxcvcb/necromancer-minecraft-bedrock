@@ -1,5 +1,21 @@
 ﻿cmake_minimum_required(VERSION 3.22)
 
+# ------------------------------------------------------------------------------
+# Pre-declare Googletest BEFORE dependencies (mnemosyne) are included.
+# Fixes the 'fatal: unable to read tree' error by using a clean release tag.
+# ------------------------------------------------------------------------------
+include(FetchContent)
+
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(CPM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG        v1.14.0
+)
+
 project(Necromancer)
 
 option(NECROMANCER_AVX2 "Build with AVX2 codegen" OFF)
