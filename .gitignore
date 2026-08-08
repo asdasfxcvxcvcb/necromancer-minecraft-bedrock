@@ -381,6 +381,8 @@ Necromancer.vcxproj.user
 old projects/
 necromancer-mcbe/
 
+docs/
+
 # Local junk
 _en_US_final.json
 conf_log.txt
