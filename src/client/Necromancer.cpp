@@ -901,6 +901,9 @@ void Necromancer::initSettings() {
                                              LocalizeString::get("client.settings.forceDisableVSync.name"),
                                              LocalizeString::get("client.settings.forceDisableVSync.desc"));
         set->value = &this->forceDisableVSync;
+        set->callback = [this](Setting&) {
+            DXHooks::CheckForceDisableVSync();
+        };
         this->getSettings().addSetting(set);
     }
     {

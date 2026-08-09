@@ -495,6 +495,15 @@ int ConditionGraph::parentOf(int childId) const {
     return 0;
 }
 
+std::vector<int> ConditionGraph::topLevelIds() const {
+    std::vector<int> result;
+    result.reserve(nodes.size());
+    for (auto const& node : nodes) {
+        if (parentOf(node.id) == 0) result.push_back(node.id);
+    }
+    return result;
+}
+
 bool ConditionGraph::disconnect(int parentId, int childId) {
     auto* parent = find(parentId);
     if (!parent) return false;

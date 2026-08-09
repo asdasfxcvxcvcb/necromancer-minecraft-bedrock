@@ -516,20 +516,35 @@ void ClickGUI::drawCondCanvas(D2DUtil& dc, bool rtl) {
         return total + gap;
     };
 
-    bool rootHidden = graph.getRoot() != 0 && insideDragged(graph.getRoot());
+    auto topLevels = graph.topLevelIds();
+    std::vector<int> visibleTopLevels;
+    visibleTopLevels.reserve(topLevels.size());
+    for (int id : topLevels) {
+        if (!insideDragged(id)) visibleTopLevels.push_back(id);
+    }
 
-    if (graph.empty() || rootHidden) {
+    if (graph.empty() || visibleTopLevels.empty()) {
         dc.drawAutoFitted(condBoardRect,
                                 isDragging ? L"drop to place" : L"Grab a block from the panel \u2192",
                                 d2d::Color(1.f, 1.f, 1.f, 0.28f), FontSelection::PrimaryLight,
                                 rect.getHeight() * 0.028f, DWRITE_TEXT_ALIGNMENT_CENTER,
                                 DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    } else if (graph.getRoot() != 0) {
+    } else {
         float startY = condBoardRect.top + bpad + metrics.corner - condCanvas.boardScroll;
-        totalH = measureH(graph.getRoot());
+        float cursorY = startY;
+        float maxHeight = 0.f;
+
+        for (size_t i = 0; i < visibleTopLevels.size(); i++) {
+            int id = visibleTopLevels[i];
+            if (i > 0) cursorY += gap;
+            float blockH = drawBlock(id, condBoardRect.left + bpad, cursorY);
+            cursorY += blockH;
+            maxHeight = std::max(maxHeight, cursorY - startY);
+        }
+
+        totalH = maxHeight;
         condCanvas.boardScrollMax = std::max(0.f, totalH - condBoardRect.getHeight() + bpad * 2.f);
         condCanvas.boardScroll = std::clamp(condCanvas.boardScroll, 0.f, condCanvas.boardScrollMax);
-        drawBlock(graph.getRoot(), condBoardRect.left + bpad, startY);
     }
 
     // resolve which slot the drag is hovering, then show the insert marker
@@ -605,7 +620,7 @@ void ClickGUI::drawCondCanvas(D2DUtil& dc, bool rtl) {
                     mgr.markDirty();
                     placed = true;
                 }
-            } else if (condCanvas.dragNewKind != 0 && overBoard && (graph.empty() || rootHidden)) {
+            } else if (condCanvas.dragNewKind != 0 && overBoard && visibleTopLevels.empty()) {
                 // dropping the very first block onto an empty board
                 int newId = graph.addNode(static_cast<CondKind>(condCanvas.dragNewKind), 0.f, 0.f);
                 if (newId != 0) {

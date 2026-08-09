@@ -1,4 +1,5 @@
 # Necromancer Client
+[![Discord](https://img.shields.io/discord/1448765295224291330?style=for-the-badge&logo=discord&label=Discord&color=bdb6fc)](https://discord.gg/zxQ97SYYwJ)
 
 **Necromancer Client** is an open source DLL mod client for **Minecraft: Bedrock Edition (Windows 10/11)**. It hooks into the game at runtime and adds a polished in-game menu with **43 modules** covering combat, movement, visuals and quality-of-life tweaks, plus chat commands, per-module keybinds, config presets, and full HUD customization.
 - Open source under the [LICENSE](LICENSE)

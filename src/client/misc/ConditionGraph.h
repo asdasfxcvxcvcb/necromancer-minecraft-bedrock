@@ -159,6 +159,7 @@ public:
     bool connectAt(int parentId, int childId, int index);
     bool disconnect(int parentId, int childId);
     [[nodiscard]] int parentOf(int childId) const;
+    [[nodiscard]] std::vector<int> topLevelIds() const;
     [[nodiscard]] bool wouldCycle(int parentId, int childId) const;
 
     [[nodiscard]] static int minArity(CondKind kind);

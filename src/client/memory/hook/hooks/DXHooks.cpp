@@ -18,39 +18,9 @@ namespace {
     std::shared_ptr<Hook> ResizeBuffers3Hook;
     std::shared_ptr<Hook> ExecuteCommandListsHook;
 
-    // TODO: temporary, remove this
-    bool isGfxVsyncDisabled() {
-        wchar_t appdata[MAX_PATH];
-        DWORD pathLen = GetEnvironmentVariableW(L"APPDATA", appdata, MAX_PATH);
-        if (pathLen == 0 || pathLen >= MAX_PATH) {
-            return true;
-        }
-
-        std::wstring optionsPath;
-
-        if (SDK::GameCore::get() != nullptr)
-            optionsPath = util::StrToWStr(SDK::GameCore::get()->dataPath) + L"\\minecraftpe\\options.txt";
-
-        if (optionsPath.empty() || !std::filesystem::exists(optionsPath))
-            optionsPath = std::wstring(appdata) +
-                          L"\\Minecraft Bedrock\\Users\\Shared\\games\\com.mojang\\minecraftpe\\options.txt";
-
-        std::ifstream file(optionsPath.c_str());
-        if (!file.is_open()) {
-            return true;
-        }
-
-        std::string line;
-        while (std::getline(file, line)) {
-            std::erase(line, '\r');
-            if (line.find("gfx_vsync:") == 0) {
-                return line != "gfx_vsync:0";
-            }
-        }
-
-        // default to enabled
-        return true;
-    }
+    IDXGISwapChain* presentTearingChain = nullptr;
+    bool presentTearingCached = false;
+    bool presentTearingDirty = true;
 }
 
 void DXHooks::CheckForceDisableVSync() {
@@ -59,6 +29,7 @@ void DXHooks::CheckForceDisableVSync() {
     } else {
         isForceDisableVSync = false;
     }
+    presentTearingDirty = true;
 }
 
 void DXHooks::CheckTearingSupport() {
@@ -67,9 +38,7 @@ void DXHooks::CheckTearingSupport() {
         BOOL allowTearing = FALSE;
         if (SUCCEEDED(factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing,
                                                     sizeof(allowTearing)))) {
-            if (allowTearing && !isGfxVsyncDisabled()) {
-                tearingSupported = true;
-            }
+            tearingSupported = allowTearing != FALSE;
         }
     }
 }
@@ -128,9 +97,26 @@ HRESULT __stdcall DXHooks::SwapChain_Present(IDXGISwapChain* chain, UINT SyncInt
 
     UINT presentFlags = Flags;
     UINT syncInterval = SyncInterval;
-    if (tearingSupported && isForceDisableVSync) {
+    if (Necromancer::get().shouldForceDisableVSync()) {
         syncInterval = 0;
-        presentFlags |= DXGI_PRESENT_ALLOW_TEARING;
+        if (tearingSupported) {
+            if (presentTearingDirty || presentTearingChain != chain) {
+                presentTearingChain = chain;
+                presentTearingDirty = false;
+                presentTearingCached = false;
+                ComPtr<IDXGISwapChain1> chain1;
+                if (SUCCEEDED(chain->QueryInterface(IID_PPV_ARGS(&chain1))) && chain1) {
+                    DXGI_SWAP_CHAIN_DESC1 desc1 = {};
+                    if (SUCCEEDED(chain1->GetDesc1(&desc1)) &&
+                        (desc1.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING)) {
+                        presentTearingCached = true;
+                    }
+                }
+            }
+            if (presentTearingCached) {
+                presentFlags |= DXGI_PRESENT_ALLOW_TEARING;
+            }
+        }
     }
 
     const HRESULT result = PresentHook->oFunc<decltype(&SwapChain_Present)>()(chain, syncInterval, presentFlags);
@@ -160,6 +146,7 @@ HRESULT __stdcall DXHooks::SwapChain_SetFullscreenState(IDXGISwapChain* chain, B
 
 HRESULT __stdcall DXHooks::SwapChain_ResizeBuffers(IDXGISwapChain* chain, UINT BufferCount, UINT Width, UINT Height,
                                                    DXGI_FORMAT NewFormat, UINT SwapChainFlags) {
+    presentTearingDirty = true;
     bool resizeStarted = false;
     try {
         Necromancer::getRenderer().beginResize();
@@ -188,6 +175,7 @@ HRESULT __stdcall DXHooks::SwapChain_ResizeBuffers(IDXGISwapChain* chain, UINT B
 HRESULT __stdcall DXHooks::SwapChain3_ResizeBuffers(IDXGISwapChain* chain, UINT BufferCount, UINT Width, UINT Height,
                                                     DXGI_FORMAT NewFormat, UINT SwapChainFlags,
                                                     const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue) {
+    presentTearingDirty = true;
     bool resizeStarted = false;
     try {
         Necromancer::getRenderer().beginResize();
