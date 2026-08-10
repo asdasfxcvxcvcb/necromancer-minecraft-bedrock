@@ -21,12 +21,16 @@ void HUDModule::afterLoadConfig() {
 }
 
 void HUDModule::loadStoredPosition() {
-    auto ss = SDK::ClientInstance::get()->getGuiData()->screenSize;
+    auto ci = SDK::ClientInstance::get();
+    if (!ci || !ci->getGuiData()) return;
+    auto ss = ci->getGuiData()->screenSize;
+    if (ss.x <= 0.f || ss.y <= 0.f) return;
     auto& sp = std::get<Vec2Value>(this->storedPos);
     setPos({ sp.x * ss.x, sp.y * ss.y });
 }
 
 void HUDModule::storePos(Vec2 const& ss) {
+    if (ss.x <= 0.f || ss.y <= 0.f) return;
     auto& vec = std::get<Vec2Value>(storedPos);
     vec.x = rect.left / ss.x;
     vec.y = rect.top / ss.y;

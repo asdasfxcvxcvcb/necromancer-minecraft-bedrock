@@ -285,12 +285,6 @@ void Fakelag::onPacketReceive(Event& evG) {
         float chokeDelay = std::get<FloatValue>(chokeWhenDamaged).value;
         if (chokeDelay <= 0.f) return;
 
-        if (std::get<BoolValue>(onlyEnemyHit)) {
-            if (lastEnemySwingAt == std::chrono::steady_clock::time_point {} ||
-                std::chrono::duration<float>(now - lastEnemySwingAt).count() > 0.6f)
-                return;
-        }
-
         lastHitAt = now;
         hitPending = true;
 

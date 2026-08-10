@@ -293,3 +293,77 @@ std::optional<MovementSim::Result> MovementSim::predictLanding(SDK::Actor* actor
     }
     return std::nullopt;
 }
+
+MovementSim::ForwardResult MovementSim::predictForward(SDK::Actor* actor, Vec3 seedVel, int ticks,
+                                                       bool recordTrace) {
+    ForwardResult out;
+    if (!actor || !actor->aabbShape || ticks <= 0) return out;
+    auto& dim = actor->dimension;
+    if (!dim) return out;
+    auto* region = dim->region;
+    if (!region) return out;
+
+    AABB box = actor->getBoundingBox();
+    Vec3 vel = seedVel;
+
+    std::vector<AABB> shapes;
+    shapes.reserve(64);
+    if (recordTrace) out.trace.reserve(static_cast<size_t>(ticks));
+
+    for (int tick = 1; tick <= ticks; tick++) {
+        vel.y = (vel.y - gravity) * verticalDrag;
+        if (vel.y < terminalVelocity) vel.y = terminalVelocity;
+        vel.x *= horizontalDrag;
+        vel.z *= horizontalDrag;
+
+        float reach = std::max({ NecromancerMath::abs(vel.x), NecromancerMath::abs(vel.y),
+                                 NecromancerMath::abs(vel.z) }) +
+                      0.5f;
+        AABB query = box;
+        query.lower.x -= reach;
+        query.lower.y -= reach;
+        query.lower.z -= reach;
+        query.higher.x += reach;
+        query.higher.y += reach;
+        query.higher.z += reach;
+        gatherShapes(region, query, shapes);
+
+        float dy = clipY(shapes, box, vel.y);
+        box.lower.y += dy;
+        box.higher.y += dy;
+        bool landed = false;
+        if (vel.y < 0.f && dy > vel.y + 0.000001f) {
+            vel.y = 0.f;
+            landed = true;
+            out.hitFloor = true;
+        }
+
+        float dx = clipX(shapes, box, vel.x);
+        box.lower.x += dx;
+        box.higher.x += dx;
+        if (NecromancerMath::abs(dx - vel.x) > 0.000001f) {
+            vel.x = 0.f;
+            out.hitWall = true;
+        }
+
+        float dz = clipZ(shapes, box, vel.z);
+        box.lower.z += dz;
+        box.higher.z += dz;
+        if (NecromancerMath::abs(dz - vel.z) > 0.000001f) {
+            vel.z = 0.f;
+            out.hitWall = true;
+        }
+
+        if (box.lower.y < static_cast<float>(worldFloorY) - 4.f) return out;
+
+        if (recordTrace) {
+            out.trace.push_back({ actor->getPos(), box, vel, landed });
+        }
+    }
+
+    out.valid = true;
+    out.finalBox = box;
+    out.finalPos = box.getCenter();
+    out.finalVelocity = vel;
+    return out;
+}

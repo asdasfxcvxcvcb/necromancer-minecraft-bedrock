@@ -2,6 +2,7 @@
 #include "ESP.h"
 #include "AntiObs.h"
 #include "client/misc/EntityCache.h"
+#include "client/render/asset/ItemIconCache.h"
 #include "client/misc/RenderFrameState.h"
 #include "client/misc/TargetManager.h"
 #include <client/screen/ScreenManager.h>
@@ -333,7 +334,7 @@ void ESP::onRenderOverlay(Event&) {
 
     D2DUtil dc;
     renderProjectedBoxes(dc);
-    renderEntityOverlay(dc, true, false);
+    renderEntityOverlay(dc, true, true);
 }
 
 void ESP::renderProjectedBoxes(DrawUtil& dc) {
@@ -754,17 +755,14 @@ void ESP::renderEntityOverlay(DrawUtil& dc, bool emitText, bool emitIcons) {
                     dc.fillRectangle(bg, { 0.f, 0.f, 0.f, 0.45f });
                 }
 
-                if (dc.isMinecraft()) {
-                    auto& mcDc = static_cast<MCDrawUtil&>(dc);
-                    for (size_t i = 0; i < stacks.size(); i++) {
-                        Vec2 iconPos;
-                        if (horizontal) {
-                            iconPos = { bg.left + 2.f + i * (itemSzE + iconGap), bg.top + 2.f };
-                        } else {
-                            iconPos = { bg.left + 2.f, bg.top + 2.f + i * (itemSzE + iconGap) };
-                        }
-                        mcDc.drawItem(stacks[i], iconPos, itemSzE / 48.f, 1.f);
+                for (size_t i = 0; i < stacks.size(); i++) {
+                    Vec2 iconPos;
+                    if (horizontal) {
+                        iconPos = { bg.left + 2.f + i * (itemSzE + iconGap), bg.top + 2.f };
+                    } else {
+                        iconPos = { bg.left + 2.f, bg.top + 2.f + i * (itemSzE + iconGap) };
                     }
+                    ItemIconCache::drawItem(dc, stacks[i], iconPos, itemSzE);
                 }
 
                 advance(cur, itemsPosKey, itemSzE + 4.f, gap);

@@ -154,8 +154,15 @@ HRESULT __stdcall DXHooks::SwapChain_ResizeBuffers(IDXGISwapChain* chain, UINT B
     } catch (...) {
     }
     UINT newFlags = SwapChainFlags;
-    if (tearingSupported && isForceDisableVSync) {
-        newFlags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+    {
+        DXGI_SWAP_CHAIN_DESC desc = {};
+        if (SUCCEEDED(chain->GetDesc(&desc))) {
+            if (desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) {
+                newFlags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+            } else {
+                newFlags &= ~static_cast<UINT>(DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING);
+            }
+        }
     }
 
     const HRESULT result = ResizeBuffersHook->oFunc<decltype(&SwapChain_ResizeBuffers)>()(chain, BufferCount, Width,
@@ -183,8 +190,15 @@ HRESULT __stdcall DXHooks::SwapChain3_ResizeBuffers(IDXGISwapChain* chain, UINT 
     } catch (...) {
     }
     UINT newFlags = SwapChainFlags;
-    if (tearingSupported && isForceDisableVSync) {
-        newFlags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+    {
+        DXGI_SWAP_CHAIN_DESC desc = {};
+        if (SUCCEEDED(chain->GetDesc(&desc))) {
+            if (desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING) {
+                newFlags |= DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
+            } else {
+                newFlags &= ~static_cast<UINT>(DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING);
+            }
+        }
     }
 
     const HRESULT result = ResizeBuffers3Hook->oFunc<decltype(&SwapChain3_ResizeBuffers)>()(

@@ -28,6 +28,7 @@
 #include "modules/game/NoFall.h"
 #include "modules/game/Fakelag.h"
 #include "modules/game/Backtrack.h"
+#include "modules/game/ForwardTrack.h"
 #include "modules/game/Velocity.h"
 #include "modules/game/AntiAFK.h"
 
@@ -52,6 +53,7 @@
 #include "modules/hud/KeybindList.h"
 #include "modules/hud/BreakIndicator.h"
 #include "modules/hud/ItemCounter.h"
+#include "modules/hud/ArmorHud.h"
 #include "modules/hud/Chat.h"
 #include "modules/hud/ComboCounter.h"
 #include "modules/hud/CustomCoordinates.h"
@@ -85,6 +87,7 @@ ModuleManager::ModuleManager() {
     this->items.push_back(std::make_shared<ThirdPersonNametag>());
     this->items.push_back(std::make_shared<EnvironmentChanger>());
     this->items.push_back(std::make_shared<ItemCounter>());
+    this->items.push_back(std::make_shared<ArmorHud>());
     // this->items.push_back(std::make_shared<Chat>());
     this->items.push_back(std::make_shared<TextHotkey>());
     this->items.push_back(std::make_shared<Freelook>());
@@ -102,6 +105,7 @@ ModuleManager::ModuleManager() {
     this->items.push_back(std::make_shared<NoFall>());
     this->items.push_back(std::make_shared<Fakelag>());
     this->items.push_back(std::make_shared<Backtrack>());
+    this->items.push_back(std::make_shared<ForwardTrack>());
     this->items.push_back(std::make_shared<Velocity>());
     this->items.push_back(std::make_shared<AntiAFK>());
     this->items.push_back(std::make_shared<ESP>());

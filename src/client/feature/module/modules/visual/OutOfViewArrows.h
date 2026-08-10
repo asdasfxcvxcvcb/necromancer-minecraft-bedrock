@@ -16,5 +16,6 @@ private:
     ValueType players = BoolValue(true);
     ValueType mobs = BoolValue(false);
     ValueType playerColor = ColorValue(1.f, 0.28f, 0.15f, 1.f);
+    ValueType friendColor = ColorValue(0.25f, 1.f, 0.25f, 1.f);
     ValueType mobColor = ColorValue(0.3f, 0.9f, 0.3f, 1.f);
 };

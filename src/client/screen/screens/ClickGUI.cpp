@@ -111,9 +111,9 @@ bool ClickGUI::isModuleInTab(Module& mod) const {
     switch (modTab) {
     case COMBAT:
         return name == "AutoClicker" || name == "Aimbot" || name == "Triggerbot" || name == "ShieldBreaker" ||
-               name == "Backtrack";
+               name == "Backtrack" || name == "ForwardTrack";
     case VISUALS:
-        return name == "BowIndicator" || name == "BlockOutline" || name == "BlockESP" || name == "CPS" || name == "ComboCounter" ||
+        return name == "ArmorHud" || name == "BowIndicator" || name == "BlockOutline" || name == "BlockESP" || name == "CPS" || name == "ComboCounter" ||
                name == "BreakProgress" || name == "DamageIndicator" || name == "EnvironmentChanger" ||
                name == "ESP" || name == "FPS" || name == "Font" ||
                name == "Freelook" || name == "Hitboxes" || name == "ItemCounter" || name == "Fullbright" ||

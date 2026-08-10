@@ -96,7 +96,28 @@ file(GLOB_RECURSE RESOURCE_FILES
         "assets/*"
 )
 
+# MER maps and texture_set descriptors only feed the game's own 3D renderer, so
+# embedding them would add megabytes the client can never read back.
+list(FILTER RESOURCE_FILES EXCLUDE REGEX "\\.tga$")
+list(FILTER RESOURCE_FILES EXCLUDE REGEX "\\.texture_set\\.json$")
+
 add_resources(EMBEDDED_RESOURCES ${RESOURCE_FILES})
+
+# Item icon registry, generated from the embedded item textures so the D2D
+# renderer can draw real icons while AntiObs is active.
+set(NECROMANCER_ITEM_REGISTRY_SOURCE "${PROJECT_BINARY_DIR}/generated/ItemIconRegistry.cpp")
+set_source_files_properties("${NECROMANCER_ITEM_REGISTRY_SOURCE}" PROPERTIES GENERATED TRUE)
+
+add_custom_command(
+        OUTPUT "${NECROMANCER_ITEM_REGISTRY_SOURCE}"
+        COMMAND ${CMAKE_COMMAND}
+        "-DITEM_DIR=${CMAKE_CURRENT_SOURCE_DIR}/assets/items"
+        "-DOUTPUT_FILE=${NECROMANCER_ITEM_REGISTRY_SOURCE}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateItemIconRegistry.cmake"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GenerateItemIconRegistry.cmake"
+        COMMENT "Generating item icon registry"
+        VERBATIM
+)
 
 set(NECROMANCER_BUILD_TIMESTAMP_SOURCE
         "${PROJECT_BINARY_DIR}/generated/NecromancerBuildTimestamp.cpp")
@@ -116,6 +137,7 @@ add_library(Necromancer SHARED
         ${Necromancer_SRC}
         ${EMBEDDED_RESOURCES}
         "${NECROMANCER_BUILD_TIMESTAMP_SOURCE}"
+        "${NECROMANCER_ITEM_REGISTRY_SOURCE}"
 )
 add_dependencies(Necromancer NecromancerBuildTimestampGenerator)
 

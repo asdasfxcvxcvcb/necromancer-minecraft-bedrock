@@ -238,24 +238,28 @@ void HUDEditor::renderModules(SDK::MinecraftUIRenderContext* ctx, bool forceMine
     }
 
     auto guiData = SDK::ClientInstance::get()->getGuiData();
+    if (!guiData) return;
+
+    Vec2 screenSize = guiData->screenSize;
+    if (screenSize.x <= 0.f || screenSize.y <= 0.f) return;
 
     if (!lastScreenSize) {
-        lastScreenSize = guiData->screenSize;
+        lastScreenSize = screenSize;
     } else {
-        if (*lastScreenSize != guiData->screenSize) {
+        if (*lastScreenSize != screenSize && lastScreenSize->x > 0.f && lastScreenSize->y > 0.f) {
             Necromancer::getModuleManager().forEach([&](std::shared_ptr<Module> mod) {
                 if (mod->isHud()) {
                     HUDModule* rMod = reinterpret_cast<HUDModule*>(mod.get());
                     Vec2 oPos = rMod->getRect().getPos();
                     Vec2 oPercent = oPos / *lastScreenSize;
-                    Vec2 new_ = guiData->screenSize * oPercent;
+                    Vec2 new_ = screenSize * oPercent;
                     rMod->setPos(new_);
                 }
             });
         }
     }
 
-    lastScreenSize = guiData->screenSize;
+    lastScreenSize = screenSize;
 
     if (isActive() || SDK::ClientInstance::get()->minecraftGame->isCursorGrabbed()) {
         Necromancer::getModuleManager().forEach([&](std::shared_ptr<Module> mod) {
@@ -267,7 +271,7 @@ void HUDEditor::renderModules(SDK::MinecraftUIRenderContext* ctx, bool forceMine
             if (mod->isHud() && mod->isEnabled() && reinterpret_cast<HUDModule*>(mod.get())->isActive()) {
                 auto hudModule = static_cast<HUDModule*>(mod.get());
                 renderModule(hudModule, ctx);
-                hudModule->storePos(ctx ? SDK::ClientInstance::get()->getGuiData()->screenSize
+                hudModule->storePos(ctx ? screenSize
                                         : Vec2(Necromancer::getRenderer().getScreenSize().width,
                                                Necromancer::getRenderer().getScreenSize().height));
             }
@@ -281,6 +285,7 @@ void HUDEditor::renderModule(HUDModule* mod, SDK::MinecraftUIRenderContext* ctx)
 
     if (!ctx) {
         D2DUtil dc;
+        if (!dc.ctx) return;
         D2D1::Matrix3x2F oTrans;
         if (isActive()) mod->renderFrame(dc);
         dc.ctx->GetTransform(&oTrans);
@@ -290,6 +295,7 @@ void HUDEditor::renderModule(HUDModule* mod, SDK::MinecraftUIRenderContext* ctx)
         dc.ctx->SetTransform(oTrans);
     } else {
         MCDrawUtil dc { ctx, Necromancer::get().getFont() };
+        if (!dc.scn || !dc.scn->matrix) return;
         if (isActive()) mod->renderFrame(dc);
         dc.setImmediate(false);
         dc.flush();
@@ -311,6 +317,7 @@ void HUDEditor::renderModule(HUDModule* mod, SDK::MinecraftUIRenderContext* ctx)
             dc.flush();
         } else {
             D2DUtil dc;
+            if (!dc.ctx) return;
             if (hovering) mod->renderSelected(dc);
             mod->renderPost(dc);
         }

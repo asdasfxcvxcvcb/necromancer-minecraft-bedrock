@@ -5,6 +5,7 @@
 #include "client/event/events/RenderOverlayEvent.h"
 #include "client/event/events/RenderLayerEvent.h"
 #include "client/misc/EntityCache.h"
+#include "client/misc/PlayerListManager.h"
 #include "client/misc/RenderFrameState.h"
 #include "client/screen/ScreenManager.h"
 #include "util/DrawContext.h"
@@ -17,6 +18,7 @@
 #include <mc/common/client/renderer/game/LevelRendererPlayer.h>
 #include <mc/common/world/Minecraft.h>
 #include <mc/common/world/actor/Actor.h>
+#include <mc/common/world/actor/player/Player.h>
 #include <cmath>
 
 namespace {
@@ -101,6 +103,8 @@ OutOfViewArrows::OutOfViewArrows()
                LocalizeString::get("client.module.outOfViewArrows.mobs.desc"), mobs);
     addSetting("playerColor", LocalizeString::get("client.module.outOfViewArrows.playerColor.name"),
                LocalizeString::get("client.module.outOfViewArrows.playerColor.desc"), playerColor, "players"_istrue);
+    addSetting("friendColor", LocalizeString::get("client.module.outOfViewArrows.friendColor.name"),
+               LocalizeString::get("client.module.outOfViewArrows.friendColor.desc"), friendColor, "players"_istrue);
     addSetting("mobColor", LocalizeString::get("client.module.outOfViewArrows.mobColor.name"),
                LocalizeString::get("client.module.outOfViewArrows.mobColor.desc"), mobColor, "mobs"_istrue);
 
@@ -179,6 +183,7 @@ void OutOfViewArrows::drawArrows(DrawUtil& dc) {
     float arrowLen = std::get<FloatValue>(arrowSize).value;
 
     d2d::Color playerCol(std::get<ColorValue>(playerColor).getMainColor());
+    d2d::Color friendCol(std::get<ColorValue>(friendColor).getMainColor());
     d2d::Color mobCol(std::get<ColorValue>(mobColor).getMainColor());
 
     auto snap = EntityCache::get().snapshot();
@@ -224,7 +229,16 @@ void OutOfViewArrows::drawArrows(DrawUtil& dc) {
             dirAngle = (bearing - 90.f) * (pi_f / 180.f);
         }
 
-        d2d::Color col = isPlayer ? playerCol : mobCol;
+        d2d::Color col;
+        if (isPlayer) {
+            bool isFriend = false;
+            if (auto* player = reinterpret_cast<SDK::Player*>(entt); player) {
+                isFriend = PlayerListManager::get().isFriend(player->playerName);
+            }
+            col = isFriend ? friendCol : playerCol;
+        } else {
+            col = mobCol;
+        }
         float halfRange = maxRange * 0.5f;
         if (dist > halfRange && maxRange > 0.001f) {
             float fade = std::clamp(1.f - ((dist - halfRange) / halfRange) * 0.75f, 0.25f, 1.f);
