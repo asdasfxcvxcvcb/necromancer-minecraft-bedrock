@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "RenderFrameState.h"
 #include "EntityCache.h"
+#include "client/feature/module/modules/visual/AntiObs.h"
 #include "client/event/Eventing.h"
 #include "mc/common/client/game/ClientInstance.h"
 #include "mc/common/client/game/MinecraftGame.h"
@@ -45,6 +46,9 @@ std::shared_ptr<RenderFrameState::Frame> RenderFrameState::acquireBuffer() {
 }
 
 void RenderFrameState::onRenderLevel(Event&) {
+    captures.fetch_add(1, std::memory_order_acq_rel);
+    if (!AntiObs::isActive()) return;
+
     auto ci = SDK::ClientInstance::get();
     if (!ci || !ci->minecraft) return;
 
@@ -107,7 +111,6 @@ void RenderFrameState::onRenderLevel(Event&) {
     });
 
     current.store(std::shared_ptr<const Frame>(frame), std::memory_order_release);
-    captures.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void RenderFrameState::onLeaveGame(Event&) {

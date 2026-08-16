@@ -1,13 +1,13 @@
 #pragma once
 #include "Option.h"
+#include <mc/Addresses.h>
 
 namespace SDK {
 
     class Options : std::enable_shared_from_this<Options> {
     public:
-        void setPlayerViewPerspective(int perspective) { memory::callVirtual<void>(this, 123, perspective); }
-
-        int getPlayerViewPerspective() { return memory::callVirtual<int>(this, 124); }
+        void setPlayerViewPerspective(int perspective);
+        int getPlayerViewPerspective();
 
         bool getVsync() {
             auto it = std::find_if(options.begin(), options.end(), [](std::unique_ptr<Option>& option) {

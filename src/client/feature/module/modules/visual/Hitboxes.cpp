@@ -46,8 +46,8 @@ void Hitboxes::onRenderLevel(RenderLevelEvent& event) {
     auto lineCol = std::get<ColorValue>(lineColor).getMainColor();
     auto eyeCol = std::get<ColorValue>(eyeColor).getMainColor();
 
-    auto rak = SDK::RakNetConnector::get();
-    bool onServer = rak && !rak->ipAddress.empty();
+    auto* connectionInfo = SDK::RemoteConnectorComposite::getConnectionInfo();
+    bool onServer = connectionInfo && !connectionInfo->hostIpAddress.empty();
 
     auto snap = EntityCache::get().snapshot();
     for (auto const& view : snap->views) {

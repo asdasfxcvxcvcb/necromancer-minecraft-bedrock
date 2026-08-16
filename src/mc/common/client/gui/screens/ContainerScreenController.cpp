@@ -130,16 +130,19 @@ namespace {
 }
 
 void SDK::ContainerScreenController::_handleTakePlace(const std::string& viewName, int slot, bool b) {
-    int idx = resolveVtableIndex(this, Signatures::ContainerScreenController_handleTakePlace.result, 59, "takePlace");
+    int idx = resolveVtableIndex(this, Signatures::ContainerScreenController_handleTakePlace.result,
+                                 Signatures::VtableIndex::ContainerScreenController::handleTakePlace, "takePlace");
     memory::callVirtual<int>(this, idx, viewName, slot, b);
 }
 
 void* SDK::ContainerScreenController::_getSelectedSlotInfo() {
-    return memory::callVirtual<void*>(this, 57);
+    return memory::callVirtual<void*>(
+        this, Signatures::VtableIndex::ContainerScreenController::getSelectedSlotInfo);
 }
 
 void SDK::ContainerScreenController::handleAutoPlace(const std::string& collection, int slot) {
-    int idx = resolveVtableIndex(this, Signatures::ContainerScreenController_handleAutoPlace.result, 53, "autoPlace");
+    int idx = resolveVtableIndex(this, Signatures::ContainerScreenController_handleAutoPlace.result,
+                                 Signatures::VtableIndex::ContainerScreenController::handleAutoPlace, "autoPlace");
     memory::callVirtual<void, const std::string&, int>(this, idx, collection, slot);
 }
 
@@ -173,7 +176,8 @@ void SDK::ContainerScreenController::autoPlaceSlot(const std::string& collection
     uintptr_t target = 0;
     unsigned long exCode = 0;
     uintptr_t exAddr = 0;
-    int moved = sehCallAutoPlace(mgr, 15, &src, 0x7FFFFFFF, &dstCollections, outFilled, target, exCode, exAddr);
+    int moved = sehCallAutoPlace(mgr, Signatures::VtableIndex::ContainerManagerModel::autoPlace, &src, 0x7FFFFFFF,
+                                 &dstCollections, outFilled, target, exCode, exAddr);
 
     if (moved < 0) {
         Logger::Warn("[ChestStealer] autoPlace faulted for {}[{}] (target={:X} netMgr={:X} exCode={:X} exAddr={:X})",
@@ -232,7 +236,8 @@ int SDK::ContainerScreenController::transferSlot(const std::string& srcColl, int
 }
 
 bool SDK::ContainerScreenController::tryExit() {
-    int idx = resolveVtableIndex(this, Signatures::MinecraftScreenController_tryExit.result, 12, "tryExit");
+    int idx = resolveVtableIndex(this, Signatures::MinecraftScreenController_tryExit.result,
+                                 Signatures::VtableIndex::ContainerScreenController::tryExit, "tryExit");
     int request = 0;
     if (!sehCallTryExit(this, idx, request)) {
         Logger::Warn("[ChestStealer] tryExit faulted at vtable index {}", idx);

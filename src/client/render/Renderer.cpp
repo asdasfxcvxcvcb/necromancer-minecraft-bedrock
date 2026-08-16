@@ -117,7 +117,6 @@ bool Renderer::init(IDXGISwapChain* chain) {
         }
     }
 
-    const bool forceDX11 = Necromancer::get().shouldForceDX11();
     ComPtr<ID3D12Device> detectedDevice12;
     HRESULT device12Hr = chain->GetDevice(IID_PPV_ARGS(&detectedDevice12));
     if (SUCCEEDED(device12Hr) && detectedDevice12) {
@@ -127,28 +126,13 @@ bool Renderer::init(IDXGISwapChain* chain) {
         gameDevice12 = nullptr;
     }
 
-    if (gameDevice12 && forceDX11 && !dx12Removed) {
-        ComPtr<ID3D12Device5> device5;
-        if (SUCCEEDED(gameDevice12.As(&device5))) {
-            device5->RemoveDevice();
-        } else {
-            Logger::Warn("Force DX11 active, but ID3D12Device5 QueryInterface failed for device 0x{:X}",
-                         reinterpret_cast<uintptr_t>(gameDevice12.Get()));
-        }
-
-        bufferCount = 1;
-        Logger::Info("Force DX11 active");
-        dx12Removed = true;
-        return false;
-    }
-
-    if (forceDX11 || !gameDevice12) {
+    if (!gameDevice12) {
         ComPtr<ID3D11Device> detectedDevice11;
         HRESULT device11Hr = chain->GetDevice(IID_PPV_ARGS(&detectedDevice11));
         if (FAILED(device11Hr) || !detectedDevice11) {
             Logger::Fatal(
-                "Failed to get D3D device from swap chain: D3D11 hr=0x{:08X}, D3D12 hr=0x{:08X}, forceDX11={}",
-                static_cast<unsigned>(device11Hr), static_cast<unsigned>(device12Hr), forceDX11);
+                "Failed to get D3D device from swap chain: D3D11 hr=0x{:08X}, D3D12 hr=0x{:08X}",
+                static_cast<unsigned>(device11Hr), static_cast<unsigned>(device12Hr));
             return false;
         }
 

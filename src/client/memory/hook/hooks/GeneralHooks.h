@@ -32,7 +32,7 @@ class GenericHooks : public HookGroup {
     static float hkGetTimeOfDay(SDK::Dimension* obj, int time, float a);
     static void hkDimensionTick(SDK::Dimension* obj);
     static Color* hkGetFogColor(SDK::Dimension* obj, Color* out, SDK::Actor* ent, float f);
-    static SDK::GuiMessage& hkAddMessage(void* obj, SDK::GuiMessage& msg);
+    static void hkAddMessage(void* obj, SDK::GuiMessage& msg);
     static void hkUpdatePlayer(SDK::CameraComponent* obj, void* a, void* b);
     static void hkOnUri(void* obj, void* uri);
     static void hkGrabCursor(SDK::ClientInstance* obj);

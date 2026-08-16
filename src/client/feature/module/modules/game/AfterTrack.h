@@ -12,9 +12,9 @@ namespace SDK {
 class RenderLevelEvent;
 class SendPacketEvent;
 
-class ForwardTrack : public Module {
+class AfterTrack : public Module {
 public:
-    ForwardTrack();
+    AfterTrack();
 
     void onEnable() override;
     void onDisable() override;
@@ -24,6 +24,8 @@ public:
     void onSendPacket(Event& evG);
     void onLeaveGame(Event& evG);
     void onRenderLevel(RenderLevelEvent& event);
+
+    bool getPredictedBox(uint64_t runtimeID, AABB& out);
 
 private:
     struct VelRecord {
@@ -41,7 +43,6 @@ private:
     Vec3 blendedVelocity(uint64_t rid, Vec3 liveVel) const;
     float effectiveSimMs() const;
     bool samplePredictions();
-    bool getPredictedBox(uint64_t runtimeID, AABB& out);
     void sendLatencyProbe(float offsetMs);
     bool isAttackPacket(SDK::Packet* packet, uint64_t& outTarget) const;
 
@@ -54,9 +55,11 @@ private:
     ValueType useStackLatency = BoolValue(false);
     ValueType hitbox = BoolValue(true);
     ValueType hitboxColor = ColorValue(0.f, 1.f, 0.7f, 0.6f);
+    ValueType hitboxThickness = FloatValue(0.3f);
 
     int lastPingMs = 0;
     bool pingKnown = false;
+    std::chrono::steady_clock::time_point nextPredictionAt {};
 
     std::unordered_map<uint64_t, std::deque<VelRecord>> velHistory;
     std::unordered_map<uint64_t, AABB> predictions;

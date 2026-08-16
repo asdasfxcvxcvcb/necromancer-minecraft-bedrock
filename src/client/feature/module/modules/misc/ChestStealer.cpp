@@ -3,13 +3,11 @@
 
 #include "client/event/events/RenderLayerEvent.h"
 #include "client/event/events/TickEvent.h"
-#include "mc/Addresses.h"
 #include "mc/common/client/gui/controls/VisualTree.h"
 #include "mc/common/client/gui/controls/UIControl.h"
 #include "mc/common/client/gui/screens/ContainerScreenController.h"
 #include "mc/common/world/ItemStack.h"
 #include "util/Logger.h"
-#include "util/memory.h"
 
 namespace {
     const std::string COLL_CONTAINER = "container_items";
@@ -86,9 +84,6 @@ void ChestStealer::onRenderLayer(Event& evG) {
         controller = newController;
         sessionStart = now;
         containerScreen = isContainer;
-        auto vtable = *reinterpret_cast<void***>(controller);
-        auto mgrVtable = controller->containerManager ? *reinterpret_cast<void***>(controller->containerManager) : nullptr;
-        bool canUse = memory::callVirtual<bool>(controller, 39);
     }
     lastSeen = now;
 }

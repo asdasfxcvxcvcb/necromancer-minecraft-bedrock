@@ -1,18 +1,30 @@
 #include "pch.h"
 #include "Fakelag.h"
+#include "client/Necromancer.h"
 #include "client/event/events/SendPacketEvent.h"
 #include "client/event/events/PacketReceiveEvent.h"
 #include "client/event/events/AttackEvent.h"
 #include "client/event/events/ClickEvent.h"
+#include "client/event/events/KeyUpdateEvent.h"
 #include "client/event/events/UpdateEvent.h"
+#include "client/event/events/LeaveGameEvent.h"
+#include "client/event/events/RenderLayerEvent.h"
 #include "client/event/events/RenderLevelEvent.h"
+#include "client/input/Keyboard.h"
 #include "client/misc/EntityCache.h"
+#include "client/misc/LatencySpoof.h"
 #include "client/misc/WallCheck.h"
 #include "client/feature/module/modules/visual/AntiObs.h"
 #include "mc/common/client/game/ClientInstance.h"
+#include "mc/common/client/gui/ScreenView.h"
+#include "mc/common/client/gui/controls/VisualTree.h"
+#include "mc/common/client/gui/controls/UIControl.h"
 #include "mc/common/client/player/LocalPlayer.h"
+#include "mc/common/world/level/BlockSource.h"
 #include "mc/common/world/level/Level.h"
 #include "mc/common/world/level/HitResult.h"
+#include "mc/common/world/level/block/Block.h"
+#include "mc/common/world/level/block/BlockLegacy.h"
 #include "mc/common/network/packet/SetActorMotionPacket.h"
 #include "mc/common/network/packet/ActorEventPacket.h"
 #include <util/DrawUtil3D.h>
@@ -28,15 +40,20 @@ namespace {
 Fakelag::Fakelag()
     : Module("Fakelag", LocalizeString::get("client.module.fakelag.name"),
              LocalizeString::get("client.module.fakelag.desc"), GAME, nokeybind) {
+    addSliderSetting("chokeWhenDamaged", LocalizeString::get("client.module.fakelag.chokeWhenDamaged.name"),
+                     LocalizeString::get("client.module.fakelag.chokeWhenDamaged.desc"), chokeWhenDamaged,
+                     FloatValue(0.f), FloatValue(2.f), FloatValue(0.1f));
+    addSetting("onlyEnemyHit", LocalizeString::get("client.module.fakelag.onlyEnemyHit.name"),
+               LocalizeString::get("client.module.fakelag.onlyEnemyHit.desc"), onlyEnemyHit);
     addSetting("suppressKnockback", LocalizeString::get("client.module.fakelag.suppressKnockback.name"),
                LocalizeString::get("client.module.fakelag.suppressKnockback.desc"), suppressKnockback);
     addSetting("expertSettings", LocalizeString::get("client.module.fakelag.expertSettings.name"),
                LocalizeString::get("client.module.fakelag.expertSettings.desc"), expertSettings);
-    addSetting("adaptive", LocalizeString::get("client.module.fakelag.adaptive.name"),
-               LocalizeString::get("client.module.fakelag.adaptive.desc"), adaptive, "expertSettings"_istrue);
     addSliderSetting("delayBetweenChokes", LocalizeString::get("client.module.fakelag.delayBetweenChokes.name"),
                      LocalizeString::get("client.module.fakelag.delayBetweenChokes.desc"), delayBetweenChokes,
-                     FloatValue(0.1f), FloatValue(10.f), FloatValue(0.1f));
+                     FloatValue(0.1f), FloatValue(10.f), FloatValue(0.1f), "expertSettings"_istrue);
+    addSetting("adaptive", LocalizeString::get("client.module.fakelag.adaptive.name"),
+               LocalizeString::get("client.module.fakelag.adaptive.desc"), adaptive, "expertSettings"_istrue);
     addSliderSetting("maxTime", LocalizeString::get("client.module.fakelag.maxTime.name"),
                      LocalizeString::get("client.module.fakelag.maxTime.desc"), maxTime, FloatValue(0.f),
                      FloatValue(10.f), FloatValue(0.1f), "expertSettings"_istrue);
@@ -51,6 +68,18 @@ Fakelag::Fakelag()
                "expertSettings"_istrue);
     addSetting("unchokeOnHit", LocalizeString::get("client.module.fakelag.unchokeOnHit.name"),
                LocalizeString::get("client.module.fakelag.unchokeOnHit.desc"), unchokeOnHit);
+    addSetting("unchokeOnBuild", LocalizeString::get("client.module.fakelag.unchokeOnBuild.name"),
+               LocalizeString::get("client.module.fakelag.unchokeOnBuild.desc"), unchokeOnBuild);
+    addSetting("unchokeOnBreak", LocalizeString::get("client.module.fakelag.unchokeOnBreak.name"),
+               LocalizeString::get("client.module.fakelag.unchokeOnBreak.desc"), unchokeOnBreak);
+    addSetting("unchokeOnUseItem", LocalizeString::get("client.module.fakelag.unchokeOnUseItem.name"),
+               LocalizeString::get("client.module.fakelag.unchokeOnUseItem.desc"), unchokeOnUseItem);
+    addSetting("unchokeWhileLooting", LocalizeString::get("client.module.fakelag.unchokeWhileLooting.name"),
+               LocalizeString::get("client.module.fakelag.unchokeWhileLooting.desc"), unchokeWhileLooting);
+    addSetting("unchokeWhenOpeningInventory",
+               LocalizeString::get("client.module.fakelag.unchokeWhenOpeningInventory.name"),
+               LocalizeString::get("client.module.fakelag.unchokeWhenOpeningInventory.desc"),
+               unchokeWhenOpeningInventory);
     addSetting("riskyHeightChange", LocalizeString::get("client.module.fakelag.riskyHeightChange.name"),
                LocalizeString::get("client.module.fakelag.riskyHeightChange.desc"), riskyHeightChange);
     addSetting("unchokeAtCorners", LocalizeString::get("client.module.fakelag.unchokeAtCorners.name"),
@@ -58,33 +87,47 @@ Fakelag::Fakelag()
     addSliderSetting("cornerThickness", LocalizeString::get("client.module.fakelag.cornerThickness.name"),
                      LocalizeString::get("client.module.fakelag.cornerThickness.desc"), cornerThickness,
                      FloatValue(0.f), FloatValue(1.5f), FloatValue(0.05f), "unchokeAtCorners"_istrue);
-    addSliderSetting("chokeWhenDamaged", LocalizeString::get("client.module.fakelag.chokeWhenDamaged.name"),
-                     LocalizeString::get("client.module.fakelag.chokeWhenDamaged.desc"), chokeWhenDamaged,
-                     FloatValue(0.f), FloatValue(2.f), FloatValue(0.1f));
-    addSetting("onlyEnemyHit", LocalizeString::get("client.module.fakelag.onlyEnemyHit.name"),
-               LocalizeString::get("client.module.fakelag.onlyEnemyHit.desc"), onlyEnemyHit);
-    addSetting("unchokeOnBuild", LocalizeString::get("client.module.fakelag.unchokeOnBuild.name"),
-               LocalizeString::get("client.module.fakelag.unchokeOnBuild.desc"), unchokeOnBuild);
-    addSetting("unchokeOnBreak", LocalizeString::get("client.module.fakelag.unchokeOnBreak.name"),
-               LocalizeString::get("client.module.fakelag.unchokeOnBreak.desc"), unchokeOnBreak);
     addSetting("showChokedHitbox", LocalizeString::get("client.module.fakelag.showChokedHitbox.name"),
                LocalizeString::get("client.module.fakelag.showChokedHitbox.desc"), showChokedHitbox);
     addSetting("chokedHitboxColor", LocalizeString::get("client.module.fakelag.chokedHitboxColor.name"),
                LocalizeString::get("client.module.fakelag.chokedHitboxColor.desc"), chokedHitboxColor,
                "showChokedHitbox"_istrue);
+    chokedHitboxStyle.addEntry(EnumEntry(style_outline,
+                                         LocalizeString::get("client.module.fakelag.chokedHitboxStyle.outline.name"),
+                                         LocalizeString::get("client.module.fakelag.chokedHitboxStyle.outline.desc")));
+    chokedHitboxStyle.addEntry(EnumEntry(style_filled,
+                                         LocalizeString::get("client.module.fakelag.chokedHitboxStyle.filled.name"),
+                                         LocalizeString::get("client.module.fakelag.chokedHitboxStyle.filled.desc")));
+    chokedHitboxStyle.addEntry(EnumEntry(style_both,
+                                         LocalizeString::get("client.module.fakelag.chokedHitboxStyle.both.name"),
+                                         LocalizeString::get("client.module.fakelag.chokedHitboxStyle.both.desc")));
+    chokedHitboxStyle.setSelectedKey(style_both);
+    auto styleSet = addEnumSetting("chokedHitboxStyle",
+                                   LocalizeString::get("client.module.fakelag.chokedHitboxStyle.name"),
+                                   LocalizeString::get("client.module.fakelag.chokedHitboxStyle.desc"),
+                                   chokedHitboxStyle, "showChokedHitbox"_istrue);
+    styleSet->defaultValue = EnumValue(style_both);
+    Setting::Condition outlineCondition(std::vector<Setting::SingleCond> {
+        { "showChokedHitbox", { 1 }, false },
+        { "chokedHitboxStyle", { style_outline, style_both }, false },
+    });
     addSliderSetting("chokedHitboxThickness", LocalizeString::get("client.module.fakelag.chokedHitboxThickness.name"),
                      LocalizeString::get("client.module.fakelag.chokedHitboxThickness.desc"), chokedHitboxThickness,
-                     FloatValue(0.1f), FloatValue(1.f), FloatValue(0.1f), "showChokedHitbox"_istrue);
+                     FloatValue(0.1f), FloatValue(1.f), FloatValue(0.1f), outlineCondition);
 
     listen<UpdateEvent>((EventListenerFunc)&Fakelag::onUpdate);
     listen<SendPacketEvent>((EventListenerFunc)&Fakelag::onSendPacket);
     listen<PacketReceiveEvent>((EventListenerFunc)&Fakelag::onPacketReceive);
     listen<AttackEvent>((EventListenerFunc)&Fakelag::onAttack);
     listen<ClickEvent>((EventListenerFunc)&Fakelag::onClick);
+    listen<KeyUpdateEvent>((EventListenerFunc)&Fakelag::onKey);
+    listen<LeaveGameEvent>((EventListenerFunc)&Fakelag::onLeaveGame);
+    Eventing::get().listen<RenderLayerEvent, &Fakelag::onRenderLayer>(this);
     Eventing::get().listen<RenderLevelEvent, &Fakelag::onRenderLevel>(this);
 }
 
 void Fakelag::onEnable() {
+    LatencySpoof::clearChoke();
     auto ci = SDK::ClientInstance::get();
     auto lp = ci ? ci->getLocalPlayer() : nullptr;
     if (lp) captureChokeState(lp); else { chokeOrigin = {}; chokeBoxLower = {}; chokeBoxHigher = {}; }
@@ -92,6 +135,10 @@ void Fakelag::onEnable() {
     lastHitAt = {};
     lastEnemySwingAt = {};
     gapUntil = {};
+    inventoryAttemptUntil = {};
+    lootAttemptUntil = {};
+    inventoryScreenSeenAt = {};
+    lootScreenSeenAt = {};
     hitPending = false;
     releasePending = false;
     gapPhase = false;
@@ -101,12 +148,13 @@ void Fakelag::onEnable() {
     hasHeldKnockback = false;
     wasDamageOnly = damageOnlyMode();
     rollRangeThreshold();
+    LatencySpoof::setChoking(lp && !damageOnlyMode());
 
     breakProgressSeen = 0.f;
 }
 
 bool Fakelag::damageOnlyMode() {
-    return !std::get<BoolValue>(expertSettings) && std::get<FloatValue>(chokeWhenDamaged).value > 0.f;
+    return !std::get<BoolValue>(expertSettings);
 }
 
 void Fakelag::onUpdate(Event&) {
@@ -114,13 +162,21 @@ void Fakelag::onUpdate(Event&) {
 
     auto ci = SDK::ClientInstance::get();
     auto lp = ci ? ci->getLocalPlayer() : nullptr;
-    if (!lp) return;
+    if (!lp) {
+        LatencySpoof::clearChoke();
+        releasePending = false;
+        damageChokeActive = false;
+        return;
+    }
 
     auto now = std::chrono::steady_clock::now();
+    bool usingItem = std::get<BoolValue>(unchokeOnUseItem) && lp->getItemUseDuration() > 0;
+    bool interactionRelease = releaseForInteractionActive(now);
 
     bool damageOnly = damageOnlyMode();
     if (damageOnly != wasDamageOnly) {
         wasDamageOnly = damageOnly;
+        LatencySpoof::setChoking(false);
         releasePending = false;
         hitPending = false;
         gapPhase = false;
@@ -128,10 +184,16 @@ void Fakelag::onUpdate(Event&) {
         if (!damageOnly) {
             captureChokeState(lp);
             chokeStart = now;
+            LatencySpoof::setChoking(true);
         }
     }
 
     if (damageOnly) {
+        if ((usingItem || interactionRelease) && damageChokeActive) {
+            requestRelease();
+            return;
+        }
+
         if (!damageChokeActive) {
             if (hasHeldKnockback && std::chrono::duration<float>(now - kbBankedAt).count() > 0.3f) {
                 flushKnockback();
@@ -159,12 +221,18 @@ void Fakelag::onUpdate(Event&) {
         return;
     }
 
+    if (usingItem || interactionRelease) {
+        if (!gapPhase || LatencySpoof::isChoking()) requestRelease();
+        return;
+    }
+
     if (gapPhase) {
         if (now < gapUntil) return;
         gapPhase = false;
         captureChokeState(lp);
         chokeStart = now;
         rollRangeThreshold();
+        LatencySpoof::setChoking(true);
     }
 
     auto triggerRelease = [&] {
@@ -228,7 +296,11 @@ void Fakelag::onSendPacket(Event& evG) {
     if (!packet) return;
 
     auto id = packet->getID();
-    if (id != SDK::PacketID::PLAYER_AUTH_INPUT && id != SDK::PacketID::MOVE_PLAYER) return;
+    bool movement = id == SDK::PacketID::PLAYER_AUTH_INPUT || id == SDK::PacketID::MOVE_PLAYER;
+        if (!movement) {
+            if (LatencySpoof::isChoking()) LatencySpoof::requestBypass();
+            return;
+        }
 
     auto ci = SDK::ClientInstance::get();
     auto lp = ci ? ci->getLocalPlayer() : nullptr;
@@ -236,6 +308,7 @@ void Fakelag::onSendPacket(Event& evG) {
 
     if (releasePending) {
         releasePending = false;
+        LatencySpoof::setChoking(false);
         if (damageOnlyMode()) {
             damageChokeActive = false;
         } else {
@@ -252,7 +325,7 @@ void Fakelag::onSendPacket(Event& evG) {
 
     if (gapPhase) return;
 
-    ev.setCancelled(true);
+    if (!LatencySpoof::isChoking()) LatencySpoof::setChoking(true);
 }
 
 void Fakelag::onPacketReceive(Event& evG) {
@@ -293,12 +366,14 @@ void Fakelag::onPacketReceive(Event& evG) {
                 damageChokeActive = true;
                 captureChokeState(lp);
                 chokeStart = now;
+                LatencySpoof::setChoking(true);
             }
         } else if (gapPhase) {
             gapPhase = false;
             captureChokeState(lp);
             chokeStart = now;
             rollRangeThreshold();
+            LatencySpoof::setChoking(true);
         }
         return;
     }
@@ -307,6 +382,7 @@ void Fakelag::onPacketReceive(Event& evG) {
     if (motionPacket->getRuntimeID() != lp->getRuntimeID()) return;
 
     if (!std::get<BoolValue>(suppressKnockback)) return;
+    if (damageOnlyMode() && std::get<FloatValue>(chokeWhenDamaged).value <= 0.f) return;
 
     bool chokingNow = damageOnlyMode() ? damageChokeActive : (!gapPhase && !releasePending);
     if (!chokingNow) {
@@ -320,19 +396,22 @@ void Fakelag::onPacketReceive(Event& evG) {
     ev.setCancelled(true);
 }
 
+void Fakelag::requestRelease() {
+    LatencySpoof::setChoking(false);
+    releasePending = true;
+    hitPending = false;
+}
+
 void Fakelag::onAttack(Event&) {
     if (!std::get<BoolValue>(unchokeOnHit)) return;
 
     auto ci = SDK::ClientInstance::get();
     if (!ci || !ci->getLocalPlayer()) return;
 
-    releasePending = true;
-    hitPending = false;
+    requestRelease();
 }
 
 void Fakelag::onClick(Event& evG) {
-    if (!std::get<BoolValue>(unchokeOnBuild)) return;
-
     auto& ev = reinterpret_cast<ClickEvent&>(evG);
     if (ev.getClickType() != ClickEvent::ClickType::Right || !ev.isDown()) return;
 
@@ -344,11 +423,88 @@ void Fakelag::onClick(Event& evG) {
     auto hit = level ? level->getHitResult() : nullptr;
     if (!hit || hit->hitType != SDK::HitType::BLOCK) return;
 
+    if (std::get<BoolValue>(unchokeWhileLooting) && isLootContainer(hit->hitBlock)) {
+        lootAttemptUntil = std::chrono::steady_clock::now() + 2s;
+        requestRelease();
+        return;
+    }
+
+    if (!std::get<BoolValue>(unchokeOnBuild)) return;
+
     AABB& bb = lp->getBoundingBox();
     if (hit->hitBlock.y < static_cast<int>(std::floor(bb.lower.y)) - 1) return;
 
-    releasePending = true;
-    hitPending = false;
+    requestRelease();
+}
+
+void Fakelag::onKey(Event& evG) {
+    if (!std::get<BoolValue>(unchokeWhenOpeningInventory)) return;
+
+    auto& ev = reinterpret_cast<KeyUpdateEvent&>(evG);
+    if (!ev.isDown()) return;
+
+    auto ci = SDK::ClientInstance::get();
+    if (!ci || !ci->minecraftGame || !ci->getLocalPlayer() || ev.inUI()) return;
+
+    int inventoryKey = Necromancer::getKeyboard().getMappedKey("inventory");
+    if (inventoryKey == 0) inventoryKey = 'E';
+    if (ev.getKey() != inventoryKey) return;
+
+    inventoryAttemptUntil = std::chrono::steady_clock::now() + 2s;
+    requestRelease();
+}
+
+bool Fakelag::isLootContainer(BlockPos const& pos) {
+    auto ci = SDK::ClientInstance::get();
+    auto region = ci ? ci->getRegion() : nullptr;
+    if (!region) return false;
+
+    auto block = region->getBlock(pos);
+    if (!block || !block->legacyBlock) return false;
+
+    auto id = block->legacyBlock->namespacedId.getString();
+    return id == "minecraft:chest" || id == "minecraft:trapped_chest" || id == "minecraft:ender_chest" ||
+           id == "minecraft:barrel" || id == "minecraft:hopper" || id == "minecraft:dispenser" ||
+           id == "minecraft:dropper" || id == "minecraft:furnace" || id == "minecraft:blast_furnace" ||
+           id == "minecraft:smoker" || id == "minecraft:brewing_stand" || id == "minecraft:crafter" ||
+           id == "minecraft:vault" || id.find("shulker_box") != std::string::npos;
+}
+
+bool Fakelag::releaseForInteractionActive(std::chrono::steady_clock::time_point now) const {
+    constexpr auto screenTimeout = 250ms;
+
+    bool inventoryActive = std::get<BoolValue>(unchokeWhenOpeningInventory).value &&
+                           (now < inventoryAttemptUntil ||
+                            (inventoryScreenSeenAt != std::chrono::steady_clock::time_point {} &&
+                             now - inventoryScreenSeenAt <= screenTimeout));
+    bool lootActive = std::get<BoolValue>(unchokeWhileLooting).value &&
+                      (now < lootAttemptUntil ||
+                       (lootScreenSeenAt != std::chrono::steady_clock::time_point {} &&
+                        now - lootScreenSeenAt <= screenTimeout));
+    return inventoryActive || lootActive;
+}
+
+void Fakelag::onRenderLayer(RenderLayerEvent& event) {
+    auto view = event.getScreenView();
+    if (!view || !view->visualTree || !view->visualTree->rootControl) return;
+
+    auto now = std::chrono::steady_clock::now();
+    auto const& name = view->visualTree->rootControl->name;
+    if (std::get<BoolValue>(unchokeWhenOpeningInventory) && name == "inventory_screen") {
+        inventoryAttemptUntil = {};
+        inventoryScreenSeenAt = now;
+    }
+
+    if (std::get<BoolValue>(unchokeWhileLooting) &&
+        (name.find("chest") != std::string::npos || name.find("barrel") != std::string::npos ||
+         name.find("shulker") != std::string::npos || name.find("hopper") != std::string::npos ||
+         name.find("dispenser") != std::string::npos || name.find("dropper") != std::string::npos ||
+         name.find("furnace") != std::string::npos || name.find("smoker") != std::string::npos ||
+         name.find("brewing") != std::string::npos || name.find("container") != std::string::npos ||
+         name.find("vault") != std::string::npos)) {
+        lootAttemptUntil = {};
+        lootScreenSeenAt = now;
+    }
 }
 
 bool Fakelag::isBreakingBlock(SDK::LocalPlayer* lp) {
@@ -425,6 +581,18 @@ bool Fakelag::enemyWatchingGhost(SDK::LocalPlayer* lp) {
     return false;
 }
 
+void Fakelag::onLeaveGame(Event&) {
+    LatencySpoof::clearChoke();
+    releasePending = false;
+    hitPending = false;
+    gapPhase = false;
+    damageChokeActive = false;
+    inventoryAttemptUntil = {};
+    lootAttemptUntil = {};
+    inventoryScreenSeenAt = {};
+    lootScreenSeenAt = {};
+}
+
 void Fakelag::onRenderLevel(RenderLevelEvent&) {
     if (AntiObs::isActive()) return;
     if (!std::get<BoolValue>(showChokedHitbox) || gapPhase) return;
@@ -434,33 +602,23 @@ void Fakelag::onRenderLevel(RenderLevelEvent&) {
     if (!ci || !ci->levelRenderer || !SDK::ScreenContext::instance3d) return;
     if (!ci->getLocalPlayer()) return;
 
-    d2d::Color fillCol(std::get<ColorValue>(chokedHitboxColor).getMainColor());
-    d2d::Color lineCol = fillCol;
-    lineCol.a = std::max(lineCol.a, 0.9f);
+    d2d::Color color(std::get<ColorValue>(chokedHitboxColor).getMainColor());
+    d2d::Color outlineColor(color);
+    outlineColor.a = std::max(outlineColor.a, 0.65f);
+    int style = chokedHitboxStyle.getSelectedKey();
     float thickness = std::get<FloatValue>(chokedHitboxThickness).value / 10.f;
 
-    MCDrawUtil3D dc(ci->levelRenderer, SDK::ScreenContext::instance3d, SDK::MaterialPtr::getUIColor());
+    MCDrawUtil3D dc(ci->levelRenderer, SDK::ScreenContext::instance3d,
+                    SDK::MaterialPtr::getSelectionOverlayMaterial());
+    AABB box { chokeBoxLower, chokeBoxHigher };
 
-    Vec3 l = chokeBoxLower;
-    Vec3 h = chokeBoxHigher;
-
-    dc.fillQuad({ l.x, l.y, l.z }, { h.x, l.y, l.z }, { h.x, l.y, h.z }, { l.x, l.y, h.z }, fillCol);
-    dc.fillQuad({ l.x, h.y, l.z }, { h.x, h.y, l.z }, { h.x, h.y, h.z }, { l.x, h.y, h.z }, fillCol);
-    dc.fillQuad({ l.x, l.y, l.z }, { h.x, l.y, l.z }, { h.x, h.y, l.z }, { l.x, h.y, l.z }, fillCol);
-    dc.fillQuad({ l.x, l.y, h.z }, { h.x, l.y, h.z }, { h.x, h.y, h.z }, { l.x, h.y, h.z }, fillCol);
-    dc.fillQuad({ l.x, l.y, l.z }, { l.x, l.y, h.z }, { l.x, h.y, h.z }, { l.x, h.y, l.z }, fillCol);
-    dc.fillQuad({ h.x, l.y, l.z }, { h.x, l.y, h.z }, { h.x, h.y, h.z }, { h.x, h.y, l.z }, fillCol);
-
-    std::pair<Vec3, Vec3> edges[12] = {
-        { { l.x, l.y, l.z }, { h.x, l.y, l.z } }, { { h.x, l.y, l.z }, { h.x, l.y, h.z } },
-        { { h.x, l.y, h.z }, { l.x, l.y, h.z } }, { { l.x, l.y, h.z }, { l.x, l.y, l.z } },
-        { { l.x, h.y, l.z }, { h.x, h.y, l.z } }, { { h.x, h.y, l.z }, { h.x, h.y, h.z } },
-        { { h.x, h.y, h.z }, { l.x, h.y, h.z } }, { { l.x, h.y, h.z }, { l.x, h.y, l.z } },
-        { { l.x, l.y, l.z }, { l.x, h.y, l.z } }, { { h.x, l.y, l.z }, { h.x, h.y, l.z } },
-        { { h.x, l.y, h.z }, { h.x, h.y, h.z } }, { { l.x, l.y, h.z }, { l.x, h.y, h.z } },
-    };
-    for (auto& e : edges) {
-        dc.drawThickLine(e.first, e.second, thickness, lineCol);
+    if (style != style_outline) {
+        dc.fillBox(box, color);
+        dc.flush();
+    }
+    if (style != style_filled) {
+        dc.drawThickBox(box, thickness, outlineColor);
+        dc.flush();
     }
 }
 
@@ -490,9 +648,14 @@ void Fakelag::flushKnockback() {
 }
 
 void Fakelag::onDisable() {
+    LatencySpoof::clearChoke();
     releasePending = false;
     hitPending = false;
     gapPhase = false;
     damageChokeActive = false;
+    inventoryAttemptUntil = {};
+    lootAttemptUntil = {};
+    inventoryScreenSeenAt = {};
+    lootScreenSeenAt = {};
     flushKnockback();
 }

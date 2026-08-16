@@ -210,7 +210,10 @@ std::wstring WAILA::getBlockDisplayName(SDK::Block const& block, std::string con
         alignas(SDK::ItemStack) char storage[sizeof(SDK::ItemStack)] = {};
         auto itemStack = SDK::ItemStack::constructFromBlock(storage, block, 1, nullptr);
         if (itemStack) {
-            auto hoverName = itemStack->getHoverName();
+            std::string hoverName;
+            if (itemStack->getItem()) {
+                hoverName = itemStack->getHoverName();
+            }
             itemStack->destruct();
             if (!hoverName.empty()) {
                 return util::StrToWStr(hoverName);

@@ -24,5 +24,6 @@ SDK::MaterialPtr* SDK::MaterialPtr::getSelectionOverlayMaterial() {
 SDK::MaterialPtr* SDK::MaterialPtr::createMaterial(const SDK::HashedString& name) {
     static class RenderMaterialGroup* materialGroup =
         Signatures::RenderMaterialGroup__common.as_ptr<class RenderMaterialGroup>();
-    return memory::callVirtual<SDK::MaterialPtr*, const SDK::HashedString&>(materialGroup, 1, name);
+    return memory::callVirtual<SDK::MaterialPtr*, const SDK::HashedString&>(
+        materialGroup, Signatures::VtableIndex::RenderMaterialGroup::createMaterial, name);
 }

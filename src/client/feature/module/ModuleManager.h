@@ -22,8 +22,9 @@ public:
     }
 
     virtual std::shared_ptr<Module> find(std::string const& name) {
+        std::string_view resolvedName = equalsIgnoreCase(name, "ForwardTrack") ? "AfterTrack" : std::string_view(name);
         for (auto& item : this->items) {
-            if (equalsIgnoreCase(name, item->name())) return item;
+            if (equalsIgnoreCase(resolvedName, item->name())) return item;
         }
         return nullptr;
     }

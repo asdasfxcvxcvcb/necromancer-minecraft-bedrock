@@ -1,0 +1,36 @@
+#include "RemoteConnectorComposite.h"
+#include "PacketSender.h"
+#include "mc/common/client/game/ClientInstance.h"
+
+SDK::RemoteConnectorComposite* SDK::RemoteConnectorComposite::get() {
+    auto* clientInstance = ClientInstance::get();
+    if (!clientInstance || !clientInstance->packetSender || !clientInstance->packetSender->networkSystem) {
+        return nullptr;
+    }
+    return clientInstance->packetSender->networkSystem->remoteConnector;
+}
+
+SDK::RemoteConnector* SDK::RemoteConnectorComposite::getActiveConnector() {
+    auto* ownerControlBlock =
+        hat::member_at<uint8_t*>(this, Signatures::FieldOffset::RemoteConnectorComposite::ownerControlBlock);
+    auto* networkSessionOwner =
+        hat::member_at<void*>(this, Signatures::FieldOffset::RemoteConnectorComposite::networkSessionOwner);
+    if (!ownerControlBlock || !*ownerControlBlock || !networkSessionOwner) {
+        return nullptr;
+    }
+
+    auto* sessionInfo =
+        hat::member_at<void*>(networkSessionOwner, Signatures::FieldOffset::NetworkSessionOwner::sessionInfo);
+    const bool usesNetherNet =
+        sessionInfo && hat::member_at<int>(sessionInfo, Signatures::FieldOffset::NetworkSessionInfo::connectorType) ==
+                           Signatures::FieldOffset::NetworkSessionInfo::netherNetConnectorType;
+    return usesNetherNet ? static_cast<RemoteConnector*>(netherNetConnector)
+                         : static_cast<RemoteConnector*>(rakNetConnector);
+}
+
+SDK::Social::GameConnectionInfo* SDK::RemoteConnectorComposite::getConnectionInfo() {
+    auto* composite = get();
+    if (!composite) return nullptr;
+    auto* connector = composite->getActiveConnector();
+    return connector ? connector->getConnectedGameInfo() : nullptr;
+}

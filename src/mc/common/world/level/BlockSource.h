@@ -1,6 +1,7 @@
 #pragma once
 #include "util/LMath.h"
 #include "util/memory.h"
+#include <mc/Addresses.h>
 #include <vector>
 #include <functional>
 
@@ -18,11 +19,12 @@ namespace SDK {
     class BlockSource {
     public:
         bool isSolidBlockingBlockAt(int x, int y, int z) {
-            return memory::callVirtual<bool>(this, 53, x, y, z);
+            return memory::callVirtual<bool>(this, Signatures::VtableIndex::BlockSource::isSolidBlockingBlock, x, y, z);
         }
 
         bool isSolidBlockingBlockAt(BlockPos const& pos) {
-            return memory::callVirtual<bool>(this, 53, pos.x, pos.y, pos.z);
+            return memory::callVirtual<bool>(this, Signatures::VtableIndex::BlockSource::isSolidBlockingBlock, pos.x,
+                                             pos.y, pos.z);
         }
 
         virtual ~BlockSource() = 0;                                                                     // 0x0

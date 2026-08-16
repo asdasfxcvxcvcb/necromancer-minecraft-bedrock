@@ -3,6 +3,7 @@
 //
 #include <cstdint>
 #include <limits>
+#include <memory>
 
 #include "Necromancer.h"
 #include "BuildTimestamp.h"
@@ -115,108 +116,105 @@ namespace {
         return range;
     }
 
-    // Max stack bytes inspected per thread. Deep enough to cover any hook chain,
-    // bounded so a runaway stack cannot stall the scan.
-    constexpr SIZE_T maxStackScanBytes = 256 * 1024;
+    bool unwindFrame(CONTEXT& context) noexcept {
+        __try {
+            DWORD64 imageBase = 0;
+            auto* functionEntry = RtlLookupFunctionEntry(context.Rip, &imageBase, nullptr);
+            if (functionEntry) {
+                PVOID handlerData = nullptr;
+                DWORD64 establisherFrame = 0;
+                KNONVOLATILE_CONTEXT_POINTERS contextPointers {};
+                RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, context.Rip, functionEntry, &context, &handlerData,
+                                 &establisherFrame, &contextPointers);
+                return true;
+            }
+
+            MEMORY_BASIC_INFORMATION mbi {};
+            if (context.Rsp == 0 ||
+                VirtualQuery(reinterpret_cast<LPCVOID>(context.Rsp), &mbi, sizeof(mbi)) != sizeof(mbi) ||
+                mbi.State != MEM_COMMIT || (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0) {
+                return false;
+            }
+
+            const auto regionEnd = reinterpret_cast<DWORD64>(mbi.BaseAddress) + mbi.RegionSize;
+            if (context.Rsp > regionEnd || regionEnd - context.Rsp < sizeof(DWORD64)) {
+                return false;
+            }
+
+            context.Rip = *reinterpret_cast<DWORD64 const*>(context.Rsp);
+            context.Rsp += sizeof(DWORD64);
+            return true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            return false;
+        }
+    }
 
     bool threadTouchesImage(HANDLE thread, ImageRange const& range) noexcept {
         CONTEXT context {};
         context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
         if (!GetThreadContext(thread, &context)) {
-            // Cannot inspect it, so we cannot prove it is clear.
             return true;
         }
 
-        if (range.contains(static_cast<uintptr_t>(context.Rip))) {
-            return true;
-        }
+        constexpr size_t maxFrames = 256;
+        for (size_t frame = 0; frame < maxFrames && context.Rip != 0; ++frame) {
+            if (range.contains(static_cast<uintptr_t>(context.Rip))) {
+                return true;
+            }
 
-        auto stackPointer = static_cast<uintptr_t>(context.Rsp);
-        if (stackPointer == 0) return false;
-
-        MEMORY_BASIC_INFORMATION mbi {};
-        if (VirtualQuery(reinterpret_cast<LPCVOID>(stackPointer), &mbi, sizeof(mbi)) != sizeof(mbi)) {
-            return true;
-        }
-        if (mbi.State != MEM_COMMIT) {
-            return false;
-        }
-
-        auto regionEnd = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
-        auto scanEnd = std::min(regionEnd, stackPointer + maxStackScanBytes);
-
-        // A return address into our image means the thread is inside a game
-        // function that one of our detours called: unmapping now would return
-        // it into freed memory.
-        for (auto cursor = stackPointer & ~static_cast<uintptr_t>(7); cursor + sizeof(uintptr_t) <= scanEnd;
-             cursor += sizeof(uintptr_t)) {
-            if (range.contains(*reinterpret_cast<uintptr_t const*>(cursor))) {
+            const auto previousRip = context.Rip;
+            const auto previousRsp = context.Rsp;
+            if (!unwindFrame(context) || (context.Rip == previousRip && context.Rsp == previousRsp)) {
                 return true;
             }
         }
 
-        return false;
+        return context.Rip != 0;
     }
 
-    // True when no other thread has its instruction pointer or a stack return
-    // address inside our image. All other threads stay suspended for the whole
-    // check so the answer cannot go stale between inspecting and acting on it.
-    //
-    // Nothing in here may allocate, lock or log while threads are suspended: a
-    // suspended thread can hold the heap or logger lock, which would deadlock us.
-    bool noThreadInsideImage(ImageRange const& range, std::vector<DWORD>& threadIds,
-                             std::vector<HANDLE>& threadHandles) noexcept {
-        threadIds.clear();
-        threadHandles.clear();
-
+    bool noThreadInsideImage(ImageRange const& range) noexcept {
         const auto ownThread = GetCurrentThreadId();
         const auto ownProcess = GetCurrentProcessId();
 
         HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
         if (snapshot == INVALID_HANDLE_VALUE) return false;
 
+        bool clear = true;
         THREADENTRY32 entry {};
         entry.dwSize = sizeof(entry);
         if (Thread32First(snapshot, &entry)) {
             do {
                 if (entry.dwSize >= FIELD_OFFSET(THREADENTRY32, th32ThreadID) + sizeof(entry.th32ThreadID) &&
                     entry.th32OwnerProcessID == ownProcess && entry.th32ThreadID != ownThread) {
-                    threadIds.push_back(entry.th32ThreadID);
+                    HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, entry.th32ThreadID);
+                    if (!thread) {
+                        const auto error = GetLastError();
+                        if (error != ERROR_INVALID_PARAMETER && error != ERROR_INVALID_HANDLE) {
+                            clear = false;
+                        }
+                    } else {
+                        if (SuspendThread(thread) == static_cast<DWORD>(-1)) {
+                            const auto error = GetLastError();
+                            if (error != ERROR_INVALID_PARAMETER && error != ERROR_INVALID_HANDLE) {
+                                clear = false;
+                            }
+                        } else {
+                            if (threadTouchesImage(thread, range)) {
+                                clear = false;
+                            }
+                            ResumeThread(thread);
+                        }
+                        CloseHandle(thread);
+                    }
                 }
                 entry.dwSize = sizeof(entry);
             } while (Thread32Next(snapshot, &entry));
         }
         CloseHandle(snapshot);
 
-        threadHandles.reserve(threadIds.size());
-        for (const auto id : threadIds) {
-            HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, id);
-            if (thread) threadHandles.push_back(thread);
-        }
-
-        bool clear = true;
-        for (auto thread : threadHandles) {
-            if (SuspendThread(thread) == static_cast<DWORD>(-1)) {
-                continue;
-            }
-            if (clear && threadTouchesImage(thread, range)) {
-                clear = false;
-            }
-        }
-
-        for (auto thread : threadHandles) {
-            ResumeThread(thread);
-        }
-        for (auto thread : threadHandles) {
-            CloseHandle(thread);
-        }
-        threadHandles.clear();
-
         return clear;
     }
 
-    // Refuse to unload rather than unmap under a live thread. Staying resident
-    // leaks the image; unmapping too early kills the game.
     constexpr auto drainTimeout = 5s;
 
     bool waitForThreadsToLeaveImage(HMODULE module) noexcept {
@@ -226,23 +224,22 @@ namespace {
             return false;
         }
 
-        std::vector<DWORD> threadIds;
-        std::vector<HANDLE> threadHandles;
-
         const auto deadline = std::chrono::steady_clock::now() + drainTimeout;
         int attempts = 0;
         while (std::chrono::steady_clock::now() < deadline) {
             ++attempts;
-            if (noThreadInsideImage(range, threadIds, threadHandles)) {
+            if (noThreadInsideImage(range)) {
                 Logger::Info("Eject: image clear of all threads after {} scan(s)", attempts);
                 return true;
             }
-            std::this_thread::sleep_for(2ms);
+            std::this_thread::sleep_for(1ms);
         }
 
         Logger::Fatal("Eject: threads still inside image after {} scans; keeping DLL loaded", attempts);
         return false;
     }
+
+    void destroyRuntimeObjects() noexcept;
 
     DWORD WINAPI ejectThread(LPVOID module) {
         auto& necro = Necromancer::get();
@@ -253,9 +250,36 @@ namespace {
             return 1;
         }
 
-        Logger::Info("Necromancer Client detached.");
+        Logger::Info("Eject: pre-unload teardown complete");
+        destroyRuntimeObjects();
+        Logger::Info("Eject: runtime objects destroyed");
         Logger::Shutdown();
         FreeLibraryAndExitThread(dll, 0);
+    }
+
+    void destroyRuntimeObjects() noexcept {
+        try {
+            auto destroyIf = [](auto* buf, auto*& ref) {
+                if (ref) {
+                    std::destroy_at(ref);
+                    ref = nullptr;
+                }
+            };
+
+            auto* kb = std::launder(reinterpret_cast<Keyboard*>(keyboardBuf)); destroyIf(keyboardBuf, kb);
+            auto* hk = std::launder(reinterpret_cast<NecromancerHooks*>(hooks)); destroyIf(hooks, hk);
+            auto* as = std::launder(reinterpret_cast<Assets*>(assetsBuf)); destroyIf(assetsBuf, as);
+            auto* rn = std::launder(reinterpret_cast<Renderer*>(rendererBuf)); destroyIf(rendererBuf, rn);
+            auto* sm = std::launder(reinterpret_cast<ScreenManager*>(scnMgrBuf)); destroyIf(scnMgrBuf, sm);
+            auto* cm = std::launder(reinterpret_cast<CommandManager*>(commandMgrBuf)); destroyIf(commandMgrBuf, cm);
+            auto* mm = std::launder(reinterpret_cast<ModuleManager*>(mmgrBuf)); destroyIf(mmgrBuf, mm);
+            auto* sg = std::launder(reinterpret_cast<SettingGroup*>(mainSettingGroup)); destroyIf(mainSettingGroup, sg);
+            auto* cfg = std::launder(reinterpret_cast<ConfigManager*>(configMgrBuf)); destroyIf(configMgrBuf, cfg);
+            auto* no = std::launder(reinterpret_cast<Notifications*>(notificaitonsBuf)); destroyIf(notificaitonsBuf, no);
+            auto* ne = std::launder(reinterpret_cast<Necromancer*>(necromancerBuf)); destroyIf(necromancerBuf, ne);
+            auto* ev = std::launder(reinterpret_cast<Eventing*>(eventing)); destroyIf(eventing, ev);
+            auto* mq = std::launder(reinterpret_cast<ClientMessageQueue*>(messageSinkBuf)); destroyIf(messageSinkBuf, mq);
+        } catch (...) {}
     }
 
 }
@@ -390,6 +414,7 @@ DWORD __stdcall startThreadImpl(HINSTANCE dll) {
         MVSIG(MainWindow__windowProcCallback),
         MVSIG(LevelRenderer_renderLevel),
         MVSIG(Options_getGamma),
+        MVSIG(Options_setPerspective),
         MVSIG(Options_getPerspective),
         MVSIG(Options_getHideHand),
         MVSIG(ClientInstance_grabCursor),
@@ -411,7 +436,14 @@ DWORD __stdcall startThreadImpl(HINSTANCE dll) {
         MVSIG(ItemStack_ItemStackBlock),
         MVSIG(ItemStackVtable),
         MVSIG(ItemStackBase_destructor),
+        MVSIG(Vtable::Actor),
+        MVSIG(Vtable::Mob),
+        MVSIG(Vtable::Player),
+        MVSIG(Vtable::LocalPlayer),
+        MVSIG(Vtable::ClientInstance),
+        MVSIG(Vtable::Options),
         MVSIG(Vtable::Level),
+        MVSIG(Vtable::RakPeer),
         MVSIG(Tessellator_begin),
         MVSIG(Tessellator_vertex),
         MVSIG(Tessellator_color),
@@ -447,7 +479,8 @@ DWORD __stdcall startThreadImpl(HINSTANCE dll) {
         MVSIG(Actor_attack),
         MVSIG(GameMode_attack),
         MVSIG(GameMode_buildBlock),
-        MVSIG(GuiData__addMessage),
+        MVSIG(Actor_getNameTag),
+        MVSIG(GuiMessageVector_emplaceBack),
         MVSIG(_updatePlayer),
         MVSIG(GameArguments__onUri),
         MVSIG(RenderMaterialGroup__common),
@@ -714,6 +747,12 @@ bool Necromancer::prepareForUnload(HMODULE module) noexcept {
             return false;
         }
 
+        this->shouldEject.store(false, std::memory_order_release);
+        this->mainThreadEjectCleanupComplete.store(false, std::memory_order_release);
+        this->renderHookActive.store(false, std::memory_order_release);
+        this->hasInit = false;
+        hasInjected = false;
+
         Necromancer::getHooks().releaseHookStorage();
 
 #ifdef NECROMANCER_CRASH_REPORTING
@@ -749,7 +788,13 @@ void Necromancer::completeEjectFromRenderThread() noexcept {
     }
 
     if (!this->unloadStarted.exchange(true, std::memory_order_acq_rel)) {
-        CloseHandle(CreateThread(nullptr, 0, ejectThread, dllInst, 0, nullptr));
+        HANDLE thread = CreateThread(nullptr, 0, ejectThread, dllInst, 0, nullptr);
+        if (!thread) {
+            this->unloadStarted.store(false, std::memory_order_release);
+            Logger::Fatal("Eject: failed to create unload thread ({})", GetLastError());
+            return;
+        }
+        CloseHandle(thread);
         Logger::Info("Eject: unload thread spawned");
     }
 }
@@ -1080,10 +1125,11 @@ void Necromancer::onUpdate(Event&) {
 
     if (this->shouldEject.load(std::memory_order_acquire)) {
         if (!this->mainThreadEjectCleanupComplete.load(std::memory_order_acquire)) {
-            // Both of these touch game and config state owned by this thread,
-            // so they must not be moved onto the eject thread.
             Necromancer::getScreenManager().exitCurrentScreen();
             Necromancer::getConfigManager().saveCurrentConfig();
+            Necromancer::getModuleManager().forEach([](std::shared_ptr<Module> mod) {
+                if (mod->isEnabled()) mod->setEnabled(false);
+            });
             this->mainThreadEjectCleanupComplete.store(true, std::memory_order_release);
             Logger::Info("Eject: main thread cleanup done");
         }
@@ -1106,12 +1152,8 @@ void Necromancer::onUpdate(Event&) {
 
     static bool lastDX11 = std::get<BoolValue>(this->useDX11);
     if (std::get<BoolValue>(useDX11) != lastDX11) {
-        if (lastDX11) {
-            Necromancer::getClientMessageQueue().display(
-                util::WFormat(LocalizeString::get("client.settings.dx11EnabledMsg.name")));
-        } else {
-            Necromancer::getRenderer().setShouldReinit();
-        }
+        Necromancer::getClientMessageQueue().display(
+            util::WFormat(LocalizeString::get("client.settings.dx11EnabledMsg.name")));
         lastDX11 = std::get<BoolValue>(useDX11);
     }
 

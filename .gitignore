@@ -388,3 +388,5 @@ _en_US_final.json
 conf_log.txt
 patch_rules.js
 nul
+tools/ida_vtable_scan.py
+tools/_run.py

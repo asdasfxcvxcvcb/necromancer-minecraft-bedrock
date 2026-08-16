@@ -6,10 +6,13 @@
 #include "client/event/events/PacketReceiveEvent.h"
 #include "client/event/events/AttackEvent.h"
 #include "client/event/events/ClickEvent.h"
+#include "client/event/events/KeyUpdateEvent.h"
 #include "client/event/events/LeaveGameEvent.h"
+#include "client/event/events/RenderLayerEvent.h"
 #include "client/event/events/RenderLevelEvent.h"
 #include "client/feature/module/modules/visual/AntiObs.h"
 #include "client/Necromancer.h"
+#include "client/input/Keyboard.h"
 #include "client/misc/ClientMessageQueue.h"
 #include "client/misc/EntityCache.h"
 #include "client/misc/LatencySpoof.h"
@@ -17,6 +20,9 @@
 #include "mc/Addresses.h"
 #include "mc/common/client/game/ClientInstance.h"
 #include "mc/common/client/game/MinecraftGame.h"
+#include "mc/common/client/gui/ScreenView.h"
+#include "mc/common/client/gui/controls/VisualTree.h"
+#include "mc/common/client/gui/controls/UIControl.h"
 #include "mc/common/client/player/LocalPlayer.h"
 #include "mc/common/world/Minecraft.h"
 #include "mc/common/world/level/Level.h"
@@ -161,6 +167,19 @@ Backtrack::Backtrack()
     fakeLatSet->floatEditMax = static_cast<float>(maxLatencyMs);
     stackSet->floatEditMax = static_cast<float>(maxLatencyMs);
 
+    addSetting("stopFakeLatencyWhenLooting",
+               LocalizeString::get("client.module.backtrack.stopFakeLatencyWhenLooting.name"),
+               LocalizeString::get("client.module.backtrack.stopFakeLatencyWhenLooting.desc"),
+               stopFakeLatencyWhenLooting);
+    addSetting("stopFakeLatencyWhenUsingItem",
+               LocalizeString::get("client.module.backtrack.stopFakeLatencyWhenUsingItem.name"),
+               LocalizeString::get("client.module.backtrack.stopFakeLatencyWhenUsingItem.desc"),
+               stopFakeLatencyWhenUsingItem);
+    addSetting("stopFakeLatencyWhenOpeningInventory",
+               LocalizeString::get("client.module.backtrack.stopFakeLatencyWhenOpeningInventory.name"),
+               LocalizeString::get("client.module.backtrack.stopFakeLatencyWhenOpeningInventory.desc"),
+               stopFakeLatencyWhenOpeningInventory);
+
     addSetting("onlyLastRecord", LocalizeString::get("client.module.backtrack.onlyLastRecord.name"),
                LocalizeString::get("client.module.backtrack.onlyLastRecord.desc"), onlyLastRecord);
     addSetting("freezeBacktrack", LocalizeString::get("client.module.backtrack.freezeBacktrack.name"),
@@ -182,6 +201,13 @@ Backtrack::Backtrack()
                                    LocalizeString::get("client.module.backtrack.hitboxStyle.both.desc")));
     addEnumSetting("hitboxStyle", LocalizeString::get("client.module.backtrack.hitboxStyle.name"),
                    LocalizeString::get("client.module.backtrack.hitboxStyle.desc"), hitboxStyle, "hitbox"_istrue);
+    Setting::Condition outlineCondition(std::vector<Setting::SingleCond> {
+        { "hitbox", { 1 }, false },
+        { "hitboxStyle", { style_outline, style_both }, false },
+    });
+    addSliderSetting("hitboxThickness", LocalizeString::get("client.module.backtrack.hitboxThickness.name"),
+                     LocalizeString::get("client.module.backtrack.hitboxThickness.desc"), hitboxThickness,
+                     FloatValue(0.1f), FloatValue(1.f), FloatValue(0.1f), outlineCondition);
     addSetting("throughWalls", LocalizeString::get("client.module.backtrack.throughWalls.name"),
                LocalizeString::get("client.module.backtrack.throughWalls.desc"), throughWalls, "hitbox"_istrue);
 
@@ -190,18 +216,30 @@ Backtrack::Backtrack()
     this->listen<SendPacketEvent>(&Backtrack::onSendPacket);
     this->listen<AttackEvent>(&Backtrack::onAttack);
     this->listen<ClickEvent>(&Backtrack::onClick);
+    this->listen<KeyUpdateEvent>(&Backtrack::onKey);
     this->listen<LeaveGameEvent>(&Backtrack::onLeaveGame);
+    Eventing::get().listen<RenderLayerEvent, &Backtrack::onRenderLayer>(this);
     Eventing::get().listen<RenderLevelEvent, &Backtrack::onRenderLevel>(this);
 }
 
 void Backtrack::clearState() {
     buffers.clear();
+    nextSampleAt = {};
     attackQueue.clear();
     appliedLatencyMs = 0;
+    fakeLatencyPaused = false;
     LatencySpoof::setLatency(0);
+    inventoryAttemptUntil = {};
+    lootAttemptUntil = {};
+    inventoryScreenSeenAt = {};
+    lootScreenSeenAt = {};
     pendingRID = 0;
     swallowRID = 0;
     reissueRID = 0;
+    directAttackRID = 0;
+    directAttackUntil = {};
+    preparedGhostAttack = {};
+    suppressNextClick = false;
     hasClickPending = false;
     freezeActive = false;
     aimedGhostAge = -1.f;
@@ -256,6 +294,8 @@ void Backtrack::onAfterMove(Event&) {
 
 void Backtrack::samplePositions() {
     auto now = std::chrono::steady_clock::now();
+    if (now < nextSampleAt) return;
+    nextSampleAt = now + std::chrono::milliseconds(20);
     auto ci = SDK::ClientInstance::get();
     auto lp = ci->getLocalPlayer();
     // One region lookup for the whole pass; the ground probe needs it per player.
@@ -269,28 +309,26 @@ void Backtrack::samplePositions() {
         uint64_t rid = actor->getRuntimeID();
         seenScratch.insert(rid);
         auto& buf = buffers[rid];
-        if (buf.empty() || now - buf.back().at >= std::chrono::milliseconds(20)) {
-            AABB liveBox = actor->getBoundingBox();
-            // Only probe the world when something actually consumes the answer. With the
-            // setting off this is a plain store and costs nothing per player.
-            bool rawAirborne = false;
-            bool airborne = false;
-            if (checkAirborne) {
-                // Judged from the world, not from Actor::isOnGround(). That call tests for
-                // OnGroundFlagComponent, which the client's movement code maintains for the
-                // player it simulates -- us. A remote player's physics runs on the server,
-                // so the client does not own that flag for them, and it was reading
-                // airborne for enemies stood perfectly still. Invalidate Airborne Records
-                // then rejected every record they had, which is why grounded players stayed
-                // untargetable no matter what the blend or the debounce did.
-                rawAirborne = !boxIsSupported(region, liveBox);
-                // A real jump stays off the ground for many consecutive samples; one lone
-                // sample of air is a quantisation artefact. Requiring two in a row costs
-                // 20ms of detection at takeoff and drops the false positives.
-                airborne = rawAirborne && !buf.empty() && buf.back().rawAirborne;
-            }
-            buf.push_back({ now, actor->getPos(), liveBox, airborne, rawAirborne });
+        AABB liveBox = actor->getBoundingBox();
+        // Only probe the world when something actually consumes the answer. With the
+        // setting off this is a plain store and costs nothing per player.
+        bool rawAirborne = false;
+        bool airborne = false;
+        if (checkAirborne) {
+            // Judged from the world, not from Actor::isOnGround(). That call tests for
+            // OnGroundFlagComponent, which the client's movement code maintains for the
+            // player it simulates -- us. A remote player's physics runs on the server,
+            // so the client does not own that flag for them, and it was reading
+            // airborne for enemies stood perfectly still. Invalidate Airborne Records
+            // then rejected every record they had, which is why grounded players stayed
+            // untargetable no matter what the blend or the debounce did.
+            rawAirborne = !boxIsSupported(region, liveBox);
+            // A real jump stays off the ground for many consecutive samples; one lone
+            // sample of air is a quantisation artefact. Requiring two in a row costs
+            // 20ms of detection at takeoff and drops the false positives.
+            airborne = rawAirborne && !buf.empty() && buf.back().rawAirborne;
         }
+        buf.push_back({ now, actor->getPos(), liveBox, airborne, rawAirborne });
 
         // Retention has to cover the whole slider range plus a little slack, or a
         // request past the buffer's reach finds no sample and the player silently
@@ -317,6 +355,14 @@ void Backtrack::processAirClick() {
         BT_LOG("[BT] airclick SKIP: vanilla AttackEvent already fired for this click");
         return;
     }
+
+    if (preparedGhostAttack.active && now < preparedGhostAttack.expiresAt) {
+        auto prepared = preparedGhostAttack;
+        preparedGhostAttack = {};
+        queueGhostAttack(prepared.runtimeID, prepared.box, prepared.hitPoint, prepared.ageMs);
+        return;
+    }
+    if (preparedGhostAttack.active) preparedGhostAttack = {};
 
     Vec3 aimedGhost {};
     AABB aimedBox {};
@@ -461,12 +507,22 @@ void Backtrack::processConfirmations() {
     std::erase_if(confirmQueue, [](PendingConfirm const& c) { return c.done; });
 }
 
+void Backtrack::allowDirectAttack(uint64_t runtimeID) {
+    directAttackRID = runtimeID;
+    directAttackUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+    hasClickPending = false;
+}
+
 void Backtrack::onAttack(Event& evG) {
     auto& ev = reinterpret_cast<AttackEvent&>(evG);
     auto* target = ev.getActor();
     if (!target) return;
     auto now = std::chrono::steady_clock::now();
     uint64_t rid = target->getRuntimeID();
+    if (rid == directAttackRID && now < directAttackUntil) {
+        directAttackRID = 0;
+        return;
+    }
     if (rid == reissueRID && now < reissueUntil) {
         BT_LOG("[BT] attackEvent rid={} IGNORED (our own re-issue)", rid);
         return;
@@ -475,19 +531,119 @@ void Backtrack::onAttack(Event& evG) {
     lastAttackEventAt = now;
     pendingRID = rid;
     pendingAt = now;
+    if (preparedGhostAttack.active && rid == preparedGhostAttack.runtimeID && now < preparedGhostAttack.expiresAt) {
+        aimedGhostAge = preparedGhostAttack.ageMs;
+    }
 }
 
 void Backtrack::onClick(Event& evG) {
     auto& ev = reinterpret_cast<ClickEvent&>(evG);
-    if (ev.getClickType() != ClickEvent::ClickType::Left || !ev.isDown()) return;
+    if (!ev.isDown()) return;
+
+    if (ev.getClickType() == ClickEvent::ClickType::Right) {
+        if (!std::get<BoolValue>(stopFakeLatencyWhenLooting)) return;
+
+        auto ci = SDK::ClientInstance::get();
+        if (!ci || !ci->minecraft || !ci->getLocalPlayer()) return;
+        auto level = ci->minecraft->getLevel();
+        auto hit = level ? level->getHitResult() : nullptr;
+        if (!hit || hit->hitType != SDK::HitType::BLOCK || !isLootContainer(hit->hitBlock)) return;
+
+        lootAttemptUntil = std::chrono::steady_clock::now() + 2s;
+        applyFakeLatency();
+        return;
+    }
+
+    if (ev.getClickType() != ClickEvent::ClickType::Left) return;
+
+    auto now = std::chrono::steady_clock::now();
+    if (directAttackRID != 0 && now < directAttackUntil) return;
+    if (suppressNextClick) {
+        suppressNextClick = false;
+        return;
+    }
 
     auto ci = SDK::ClientInstance::get();
     if (!ci || !ci->minecraftGame || !ci->minecraftGame->isCursorGrabbed()) return;
     if (Necromancer::get().getScreenManager().getActiveScreen()) return;
     if (!ci->getLocalPlayer()) return;
 
+    if (hasClickPending) return;
     hasClickPending = true;
-    clickPendingAt = std::chrono::steady_clock::now();
+    clickPendingAt = now;
+}
+
+void Backtrack::onKey(Event& evG) {
+    if (!std::get<BoolValue>(stopFakeLatencyWhenOpeningInventory)) return;
+
+    auto& ev = reinterpret_cast<KeyUpdateEvent&>(evG);
+    if (!ev.isDown()) return;
+
+    auto ci = SDK::ClientInstance::get();
+    if (!ci || !ci->minecraftGame || !ci->getLocalPlayer() || ev.inUI()) return;
+
+    int inventoryKey = Necromancer::getKeyboard().getMappedKey("inventory");
+    if (inventoryKey == 0) inventoryKey = 'E';
+    if (ev.getKey() != inventoryKey) return;
+
+    inventoryAttemptUntil = std::chrono::steady_clock::now() + 2s;
+    applyFakeLatency();
+}
+
+bool Backtrack::isLootContainer(BlockPos const& pos) {
+    auto ci = SDK::ClientInstance::get();
+    auto region = ci ? ci->getRegion() : nullptr;
+    if (!region) return false;
+
+    auto block = region->getBlock(pos);
+    if (!block || !block->legacyBlock) return false;
+
+    auto id = block->legacyBlock->namespacedId.getString();
+    return id == "minecraft:chest" || id == "minecraft:trapped_chest" || id == "minecraft:ender_chest" ||
+           id == "minecraft:barrel" || id == "minecraft:hopper" || id == "minecraft:dispenser" ||
+           id == "minecraft:dropper" || id == "minecraft:furnace" || id == "minecraft:blast_furnace" ||
+           id == "minecraft:smoker" || id == "minecraft:brewing_stand" || id == "minecraft:crafter" ||
+           id == "minecraft:vault" || id.find("shulker_box") != std::string::npos;
+}
+
+bool Backtrack::fakeLatencyStopped(std::chrono::steady_clock::time_point now) const {
+    auto ci = SDK::ClientInstance::get();
+    auto lp = ci ? ci->getLocalPlayer() : nullptr;
+    if (std::get<BoolValue>(stopFakeLatencyWhenUsingItem).value && lp && lp->getItemUseDuration() > 0) return true;
+
+    constexpr auto screenTimeout = 250ms;
+    bool inventoryActive = std::get<BoolValue>(stopFakeLatencyWhenOpeningInventory).value &&
+                           (now < inventoryAttemptUntil ||
+                            (inventoryScreenSeenAt != std::chrono::steady_clock::time_point {} &&
+                             now - inventoryScreenSeenAt <= screenTimeout));
+    bool lootActive = std::get<BoolValue>(stopFakeLatencyWhenLooting).value &&
+                      (now < lootAttemptUntil ||
+                       (lootScreenSeenAt != std::chrono::steady_clock::time_point {} &&
+                        now - lootScreenSeenAt <= screenTimeout));
+    return inventoryActive || lootActive;
+}
+
+void Backtrack::onRenderLayer(RenderLayerEvent& event) {
+    auto view = event.getScreenView();
+    if (!view || !view->visualTree || !view->visualTree->rootControl) return;
+
+    auto now = std::chrono::steady_clock::now();
+    auto const& name = view->visualTree->rootControl->name;
+    if (std::get<BoolValue>(stopFakeLatencyWhenOpeningInventory) && name == "inventory_screen") {
+        inventoryAttemptUntil = {};
+        inventoryScreenSeenAt = now;
+    }
+
+    if (std::get<BoolValue>(stopFakeLatencyWhenLooting) &&
+        (name.find("chest") != std::string::npos || name.find("barrel") != std::string::npos ||
+         name.find("shulker") != std::string::npos || name.find("hopper") != std::string::npos ||
+         name.find("dispenser") != std::string::npos || name.find("dropper") != std::string::npos ||
+         name.find("furnace") != std::string::npos || name.find("smoker") != std::string::npos ||
+         name.find("brewing") != std::string::npos || name.find("container") != std::string::npos ||
+         name.find("vault") != std::string::npos)) {
+        lootAttemptUntil = {};
+        lootScreenSeenAt = now;
+    }
 }
 
 bool Backtrack::cameraRay(Vec3& outEye, Vec3& outDir) {
@@ -588,7 +744,10 @@ SDK::Actor* Backtrack::pickStaleTarget(float maxDist, Vec3* outGhostPos, AABB* o
 
 float Backtrack::ghostAgeMs() {
     float base = std::clamp(std::get<FloatValue>(timeMs).value, 0.f, static_cast<float>(maxRecordMs));
-    float lag = std::clamp(std::get<FloatValue>(fakeLatencyMs).value, 0.f, static_cast<float>(maxLatencyMs));
+    float lag = fakeLatencyPaused
+                    ? 0.f
+                    : std::clamp(std::get<FloatValue>(fakeLatencyMs).value, 0.f,
+                                 static_cast<float>(maxLatencyMs));
     float stack = std::clamp(std::get<FloatValue>(stackLatencyDelayMs).value, 0.f, static_cast<float>(maxLatencyMs));
     return std::clamp(base + lag + stack, 0.f, static_cast<float>(maxRecordMs));
 }
@@ -602,8 +761,9 @@ void Backtrack::applyFakeLatency() {
     // packet objects here was tried first and did nothing: the server derives our
     // latency from datagram timing below the packet layer, so nothing above it can
     // move that number.
+    fakeLatencyPaused = fakeLatencyStopped(std::chrono::steady_clock::now());
     uint32_t want = 0;
-    if (isEnabled()) {
+    if (isEnabled() && !fakeLatencyPaused) {
         want = static_cast<uint32_t>(
             std::clamp(std::get<FloatValue>(fakeLatencyMs).value, 0.f, static_cast<float>(maxLatencyMs)));
     }
@@ -676,7 +836,31 @@ void Backtrack::onSendPacket(Event& evG) {
     // several ghosts on screen the full-window one is usually not the one aimed at,
     // and building the attack from a different moment than the box you clicked is
     // exactly why those hits did nothing.
-    float useAge = aimedGhostAge >= 0.f ? aimedGhostAge : ghostAgeMsFor(pendingRID);
+    bool usePrepared = preparedGhostAttack.active && target == preparedGhostAttack.runtimeID &&
+                       now < preparedGhostAttack.expiresAt;
+    float useAge = usePrepared ? preparedGhostAttack.ageMs
+                               : (aimedGhostAge >= 0.f ? aimedGhostAge : ghostAgeMsFor(pendingRID));
+    if (usePrepared) {
+        auto prepared = preparedGhostAttack;
+        preparedGhostAttack = {};
+        pendingReportedOffset = adjustedOffsetFor(useAge);
+        reportedOffsetUntil = now + std::chrono::milliseconds(reportedOffsetHoldMs);
+        attackQueue.push_back({ pendingRID, pendingAt, prepared.box.getCenter(), prepared.box,
+                                pushInsideBox(prepared.hitPoint, prepared.box), pendingReportedOffset });
+        while (attackQueue.size() > 16) attackQueue.pop_front();
+        swallowRID = pendingRID;
+        swallowUntil = now + std::chrono::milliseconds(150);
+        pendingRID = 0;
+        if (hasClickPending) {
+            hasClickPending = false;
+            suppressNextClick = false;
+        } else {
+            suppressNextClick = true;
+        }
+        ev.setCancelled(true);
+        return;
+    }
+
     bool ghostFresh = false;
     Sample ghostBlend {};
     const Sample* ghostSample = nullptr;
@@ -763,27 +947,83 @@ void Backtrack::sendLatencyProbe(float offsetMs) {
     BT_LOG("[BT] probe SENT offset={:.0f} ts={}", offsetMs, *reinterpret_cast<uint64_t*>(base + 0x30));
 }
 
-bool Backtrack::getGhostBox(uint64_t runtimeID, AABB& out) {
+bool Backtrack::prepareGhostAttack(uint64_t runtimeID, AABB const& ghostBox, Vec3 const& hitPoint, float ageMs) {
+    if (!isEnabled() || !resolveActor(runtimeID)) return false;
+
+    auto now = std::chrono::steady_clock::now();
+    if (preparedGhostAttack.active && now >= preparedGhostAttack.expiresAt) preparedGhostAttack = {};
+    if (preparedGhostAttack.active || hasClickPending) return false;
+
+    preparedGhostAttack.runtimeID = runtimeID;
+    preparedGhostAttack.box = ghostBox;
+    preparedGhostAttack.hitPoint = hitPoint;
+    preparedGhostAttack.ageMs = std::clamp(ageMs, 0.f, static_cast<float>(maxRecordMs));
+    preparedGhostAttack.expiresAt = now + std::chrono::milliseconds(200);
+    preparedGhostAttack.active = true;
+    return true;
+}
+
+bool Backtrack::queueGhostAttack(uint64_t runtimeID, AABB const& ghostBox, Vec3 const& hitPoint, float ageMs) {
+    if (!isEnabled()) return false;
+    auto* target = resolveActor(runtimeID);
+    if (!target) return false;
+
+    float age = std::clamp(ageMs, 0.f, static_cast<float>(maxRecordMs));
+    float reportedOffset = adjustedOffsetFor(age);
+    auto now = std::chrono::steady_clock::now();
+    pendingReportedOffset = reportedOffset;
+    reportedOffsetUntil = now + std::chrono::milliseconds(reportedOffsetHoldMs);
+    aimedGhostAge = age;
+
+    attackQueue.push_back({ runtimeID, now, ghostBox.getCenter(), ghostBox, pushInsideBox(hitPoint, ghostBox),
+                            reportedOffset });
+    while (attackQueue.size() > 16) attackQueue.pop_front();
+    return true;
+}
+
+bool Backtrack::getGhostBox(uint64_t runtimeID, AABB& out, float* outAgeMs) {
     if (!isEnabled()) return false;
 
     float age = ghostAgeMsFor(runtimeID);
     bool fresh = false;
     Sample blended {};
     const Sample* sample = nullptr;
-    // Same order the renderer and the target picker use, so an external caller aims at
-    // exactly the box that is drawn and hittable.
     if (!std::get<BoolValue>(onlyLastRecord) && interpolateSample(runtimeID, age, blended)) {
         sample = &blended;
     } else {
         sample = findSample(runtimeID, age, fresh);
     }
     if (!sample) return false;
-    // Airborne records stay drawn but are not offered to anything that attacks, so
-    // Aimbot and Triggerbot skip them without the box disappearing.
     if (std::get<BoolValue>(invalidateAirborne) && sample->airborne) return false;
 
     out = sample->box;
+    if (outAgeMs) *outAgeMs = age;
     return true;
+}
+
+bool Backtrack::getGhostRecords(uint64_t runtimeID, std::vector<GhostRecord>& out) {
+    out.clear();
+    if (!isEnabled()) return false;
+
+    bool onlyLast = std::get<BoolValue>(onlyLastRecord);
+    bool invalidAir = std::get<BoolValue>(invalidateAirborne);
+    buildGhostAges(ghostAgeScratch, runtimeID);
+    out.reserve(ghostAgeScratch.size());
+
+    for (float age : ghostAgeScratch) {
+        bool fresh = false;
+        Sample blended {};
+        const Sample* sample = nullptr;
+        if (!onlyLast && interpolateSample(runtimeID, age, blended)) {
+            sample = &blended;
+        } else {
+            sample = findSample(runtimeID, age, fresh);
+        }
+        if (!sample || (invalidAir && sample->airborne)) continue;
+        out.push_back({ sample->box, age });
+    }
+
+    return !out.empty();
 }
 
 void Backtrack::onReceivePacket(Event&) {
@@ -886,7 +1126,7 @@ float Backtrack::adjustedOffsetFor(float ghostAge) {
     if (ghostAge < 0.f) return -1.f;
     // Fake Latency is a real network delay; it cannot be retimed per hit, so when it
     // is doing the work we leave everything alone rather than desyncing ourselves.
-    if (std::get<FloatValue>(fakeLatencyMs).value > 0.f) return -1.f;
+    if (!fakeLatencyPaused && std::get<FloatValue>(fakeLatencyMs).value > 0.f) return -1.f;
 
     // Report the ghost's full age. Backtrack Time must NOT be subtracted: it is a
     // local choice about which stored position we draw, and the server has no idea
@@ -946,10 +1186,15 @@ void Backtrack::onRenderLevel(RenderLevelEvent&) {
     bool onlyLast = std::get<BoolValue>(onlyLastRecord);
     auto baseCol = std::get<ColorValue>(hitboxColor).getMainColor();
     int style = hitboxStyle.getSelectedKey();
+    float thickness = std::get<FloatValue>(hitboxThickness).value / 10.f;
+    std::vector<MCDrawUtil3D::ColoredBox> fills;
+    std::vector<MCDrawUtil3D::ColoredThickBox> outlines;
 
     // A box per ghost age per enemy -- no aiming required. Ages come from the same
     // helper the target picker uses, so everything drawn here is hittable.
     auto snap = EntityCache::get().snapshot();
+    fills.reserve(snap->views.size() * ghostAgeScratch.capacity());
+    outlines.reserve(snap->views.size() * ghostAgeScratch.capacity());
     for (auto* actor : snap->actors) {
         if (!actor || actor == lp || !actor->isPlayer()) continue;
         if (actor->isInvisible()) continue;
@@ -968,25 +1213,12 @@ void Backtrack::onRenderLevel(RenderLevelEvent&) {
             }
             if (!sample) continue;
 
-            AABB shifted = sample->box;
             d2d::Color col(baseCol);
-
-            if (style != style_outline) {
-                Vec3 lo = shifted.lower;
-                Vec3 hi = shifted.higher;
-                dc.fillQuad({ lo.x, lo.y, lo.z }, { hi.x, lo.y, lo.z }, { hi.x, lo.y, hi.z }, { lo.x, lo.y, hi.z }, col);
-                dc.fillQuad({ lo.x, hi.y, lo.z }, { hi.x, hi.y, lo.z }, { hi.x, hi.y, hi.z }, { lo.x, hi.y, hi.z }, col);
-                dc.fillQuad({ lo.x, lo.y, lo.z }, { hi.x, lo.y, lo.z }, { hi.x, hi.y, lo.z }, { lo.x, hi.y, lo.z }, col);
-                dc.fillQuad({ lo.x, lo.y, hi.z }, { hi.x, lo.y, hi.z }, { hi.x, hi.y, hi.z }, { lo.x, hi.y, hi.z }, col);
-                dc.fillQuad({ lo.x, lo.y, lo.z }, { lo.x, lo.y, hi.z }, { lo.x, hi.y, hi.z }, { lo.x, hi.y, lo.z }, col);
-                dc.fillQuad({ hi.x, lo.y, lo.z }, { hi.x, lo.y, hi.z }, { hi.x, hi.y, hi.z }, { hi.x, hi.y, lo.z }, col);
-            }
-            if (style != style_filled) {
-                d2d::Color lineCol = col;
-                lineCol.a = std::max(lineCol.a, 0.9f);
-                dc.drawBox(shifted, lineCol);
-            }
-            dc.flush();
+            if (style != style_outline) fills.push_back({ sample->box, col });
+            if (style != style_filled) outlines.push_back({ sample->box, thickness, col });
         }
     }
+
+    dc.fillBoxes(fills);
+    dc.drawThickBoxes(outlines);
 }

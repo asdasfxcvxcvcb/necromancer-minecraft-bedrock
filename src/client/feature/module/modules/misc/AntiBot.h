@@ -53,7 +53,6 @@ private:
     static bool finiteVec3(Vec3 const& value);
     static bool finiteVec2(Vec2 const& value);
 
-    ValueType mode = EnumValue(0);
     ValueType playerListCheck = BoolValue(true);
     ValueType duplicateNameCheck = BoolValue(true);
     ValueType hitboxCheck = BoolValue(true);

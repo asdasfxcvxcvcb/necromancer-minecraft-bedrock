@@ -18,6 +18,8 @@ public:
     void onCameraUpdate(Event& evG);
     void onTurnDelta(Event& evG);
     void onCinematicCamera(Event& evG);
+    void onClick(Event& evG);
+    void onAfterMove(Event& evG);
     void onRenderOverlay(RenderOverlayEvent& ev);
     void onRendererCleanup(Event& evG);
     void onDisable() override;
@@ -29,6 +31,7 @@ private:
     ValueType prioritizeTags = BoolValue(true);
     ValueType ignoreFriends = BoolValue(true);
     ValueType wallCheck = BoolValue(true);
+    ValueType hitBehindWall = BoolValue(false);
     ValueType backtrackTarget = BoolValue(false);
     ValueType aimDrift = FloatValue(0.f);
 
@@ -50,6 +53,7 @@ private:
         bool isGhost;
         AABB bounds;
         Vec3 frac;
+        float recordAgeMs;
     };
 
     std::vector<TargetCandidate> candidates;
@@ -57,6 +61,9 @@ private:
     bool freelookResolved = false;
     uint64_t currentTargetId = 0;
     bool currentTargetGhost = false;
+    bool currentTargetObstructed = false;
+    AABB currentTargetBox {};
+    float currentTargetRecordAgeMs = -1.f;
     Vec3 currentAimFrac { 0.5f, 0.55f, 0.5f };
     bool haveCurrentAimFrac = false;
     uint64_t desiredTargetId = 0;
@@ -79,4 +86,16 @@ private:
     class Backtrack* backtrackModule = nullptr;
     bool backtrackResolved = false;
     ComPtr<ID2D1SolidColorBrush> ringBrush;
+
+    struct PendingAttack {
+        uint64_t runtimeID = 0;
+        AABB box {};
+        Vec3 hitPoint {};
+        float recordAgeMs = -1.f;
+        bool ghost = false;
+        bool active = false;
+    };
+
+    PendingAttack pendingAttack {};
+    Backtrack* resolveBacktrack();
 };

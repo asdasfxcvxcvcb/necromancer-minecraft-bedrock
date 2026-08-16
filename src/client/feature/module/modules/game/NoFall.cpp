@@ -10,27 +10,45 @@
 #include <mc/common/client/player/LocalPlayer.h>
 #include <mc/common/world/Minecraft.h>
 #include <mc/common/world/level/Level.h>
+#include <mc/common/world/level/BlockSource.h>
 #include <mc/common/world/level/HitResult.h>
 #include <mc/common/world/actor/player/Player.h>
+#include <mc/common/world/actor/player/GameMode.h>
 #include <mc/common/world/actor/player/PlayerInventory.h>
 #include <mc/common/world/actor/player/Inventory.h>
 #include <mc/common/world/ItemStack.h>
 #include <mc/common/util/BasicPrintStream.h>
 #include <mc/common/nbt/CompoundTag.h>
 #include <mc/common/network/Packet.h>
-#include <client/event/events/SendPacketEvent.h>
 #include <client/event/events/TickEvent.h>
-#include <client/event/events/AfterMoveEvent.h>
+#include "client/event/events/SendPacketEvent.h"
 
 namespace {
     constexpr int enchIdProtection = 0;
     constexpr int enchIdFeatherFalling = 2;
     constexpr int actorFlagGliding = 32;
-    constexpr float eyeDropAllowance = 1.0f;
     constexpr float safeFallBlocks = 3.f;
     constexpr float gravityPerTick = 0.08f;
     constexpr float verticalDragPerTick = 0.98f;
     constexpr float terminalVelocityY = -3.92f;
+
+    constexpr float tuneVelLow = 0.70f;
+    constexpr float tuneVelHigh = 3.834f;
+    constexpr float tuneReachLow = 3.f;
+    constexpr float tuneReachHigh = 7.f;
+    constexpr float tuneLogLow = 0.477f;
+    constexpr float tuneLogMid = 2.744f;
+    constexpr float tuneLogHigh = 3.f;
+    constexpr float tuneAimLow = 5.f;
+    constexpr float tuneAimMid = 8.f;
+    constexpr float tuneAimHigh = 20.f;
+    constexpr float tunePreSwitchLow = 5.f;
+    constexpr float tunePreSwitchHigh = 20.f;
+    constexpr int tuneArmTicks = 12;
+
+    float lerpClamped(float a, float b, float t) {
+        return a + (b - a) * std::clamp(t, 0.f, 1.f);
+    }
 
     float advanceVelY(float velY) {
         float v = (velY - gravityPerTick) * verticalDragPerTick;
@@ -154,29 +172,37 @@ NoFall::NoFall()
     Setting::Condition autoWaterCond(std::vector<Setting::SingleCond> {
         { "mode", { 0 }, false },
     });
+    Setting::Condition manualCond(std::vector<Setting::SingleCond> {
+        { "mode", { 0 }, false },
+        { "autoTune", { 0 }, false },
+    });
+
+    addSetting("autoTune", LocalizeString::get("client.module.nofall.autoTune.name"),
+               LocalizeString::get("client.module.nofall.autoTune.desc"), autoTune, autoWaterCond);
+
     addSliderSetting("minDamage", LocalizeString::get("client.module.nofall.minDamage.name"),
                      LocalizeString::get("client.module.nofall.minDamage.desc"), minDamage, FloatValue(0.f),
                      FloatValue(20.f), FloatValue(1.f), autoWaterCond);
     addSliderSetting("aimDistance", LocalizeString::get("client.module.nofall.aimDistance.name"),
                      LocalizeString::get("client.module.nofall.aimDistance.desc"), aimDistance, FloatValue(5.f),
-                     FloatValue(100.f), FloatValue(5.f), autoWaterCond);
+                     FloatValue(100.f), FloatValue(5.f), manualCond);
     addSliderSetting("preSwitchDistance", LocalizeString::get("client.module.nofall.preSwitchDistance.name"),
                      LocalizeString::get("client.module.nofall.preSwitchDistance.desc"), preSwitchDistance,
-                     FloatValue(3.f), FloatValue(60.f), FloatValue(1.f), autoWaterCond);
+                     FloatValue(3.f), FloatValue(60.f), FloatValue(1.f), manualCond);
     addSliderSetting("placeReach", LocalizeString::get("client.module.nofall.placeReach.name"),
                      LocalizeString::get("client.module.nofall.placeReach.desc"), placeReach, FloatValue(2.5f),
-                     FloatValue(7.f), FloatValue(0.1f), autoWaterCond);
+                     FloatValue(7.f), FloatValue(0.1f), manualCond);
     addSliderSetting("armTickLead", LocalizeString::get("client.module.nofall.armTickLead.name"),
                      LocalizeString::get("client.module.nofall.armTickLead.desc"), armTickLead, FloatValue(4.f),
-                     FloatValue(40.f), FloatValue(1.f), autoWaterCond);
+                     FloatValue(40.f), FloatValue(1.f), manualCond);
     addSetting("disableWithMace", LocalizeString::get("client.module.nofall.disableWithMace.name"),
-               LocalizeString::get("client.module.nofall.disableWithMace.desc"), disableWithMace, autoWaterCond);
+               LocalizeString::get("client.module.nofall.disableWithMace.desc"), disableWithMace, manualCond);
     addSetting("forceWhenLow", LocalizeString::get("client.module.nofall.forceWhenLow.name"),
-               LocalizeString::get("client.module.nofall.forceWhenLow.desc"), forceWhenLow, autoWaterCond);
+               LocalizeString::get("client.module.nofall.forceWhenLow.desc"), forceWhenLow, manualCond);
     addSetting("ignorePlacedWater", LocalizeString::get("client.module.nofall.ignorePlacedWater.name"),
-               LocalizeString::get("client.module.nofall.ignorePlacedWater.desc"), ignorePlacedWater, autoWaterCond);
+               LocalizeString::get("client.module.nofall.ignorePlacedWater.desc"), ignorePlacedWater, manualCond);
     addSetting("pickUpWater", LocalizeString::get("client.module.nofall.pickUpWater.name"),
-               LocalizeString::get("client.module.nofall.pickUpWater.desc"), pickUpWater, autoWaterCond);
+               LocalizeString::get("client.module.nofall.pickUpWater.desc"), pickUpWater, manualCond);
 
     addSetting("useFakelag", LocalizeString::get("client.module.nofall.useFakelag.name"),
                LocalizeString::get("client.module.nofall.useFakelag.desc"), useFakelag, autoWaterCond);
@@ -184,71 +210,34 @@ NoFall::NoFall()
         { "mode", { 0 }, false },
         { "useFakelag", { 1 }, false },
     });
-    addSliderSetting("chokeTicks", LocalizeString::get("client.module.nofall.chokeTicks.name"),
-                     LocalizeString::get("client.module.nofall.chokeTicks.desc"), chokeTicks, FloatValue(1.f),
+    addSliderSetting("freezeTicks", LocalizeString::get("client.module.nofall.freezeTicks.name"),
+                     LocalizeString::get("client.module.nofall.freezeTicks.desc"), freezeTicks, FloatValue(1.f),
                      FloatValue(20.f), FloatValue(1.f), fakelagCond);
-    addSetting("freeEyeWhileFrozen", LocalizeString::get("client.module.nofall.freeEyeWhileFrozen.name"),
-               LocalizeString::get("client.module.nofall.freeEyeWhileFrozen.desc"), freeEyeWhileFrozen, fakelagCond);
 
     this->listen<UpdateEvent>(&NoFall::onUpdate);
     this->listen<TickEvent>((EventListenerFunc)&NoFall::onTick);
     this->listen<SendPacketEvent>((EventListenerFunc)&NoFall::onSendPacket);
-    this->listen<AfterMoveEvent>((EventListenerFunc)&NoFall::onAfterMove);
 }
 
-void NoFall::startChoke() {
-    if (chokeActive) return;
-    chokeActive = true;
-    chokedPackets = 0;
-    allowOnePacket = false;
+void NoFall::onSendPacket(Event& evG) {
+    if (!freezeActive || state != ClutchState::Frozen) return;
 
     auto ci = SDK::ClientInstance::get();
-    auto lp = ci ? ci->getLocalPlayer() : nullptr;
-    if (lp && lp->aabbShape) {
-        freezePos = lp->getPos();
-        freezeActive = true;
-    }
-}
-
-void NoFall::stopChoke() {
-    if (!chokeActive && !freezeActive) return;
-    if (freezeActive) unfrozeAt = std::chrono::steady_clock::now();
-    chokeActive = false;
-    freezeActive = false;
-    chokedPackets = 0;
-    allowOnePacket = false;
-}
-
-void NoFall::onAfterMove(Event&) {
-    if (!freezeActive) return;
-
-    auto ci = SDK::ClientInstance::get();
-    auto lp = ci ? ci->getLocalPlayer() : nullptr;
-    if (!lp || !lp->aabbShape || !lp->stateVector) {
+    if (!ci || !ci->getLocalPlayer() || !ci->minecraftGame || !ci->minecraftGame->isCursorGrabbed() ||
+        Necromancer::get().getScreenManager().getActiveScreen()) {
         freezeActive = false;
         return;
     }
 
-    Vec3& pos = lp->getPos();
-
-    float drift = freezePos.y - pos.y;
-    float allowedDrop = std::get<BoolValue>(freeEyeWhileFrozen) ? eyeDropAllowance : 0.f;
-    float eyeY = freezePos.y - std::clamp(drift, 0.f, allowedDrop);
-
-    Vec3 pinned { freezePos.x, eyeY, freezePos.z };
-    Vec3 boxDelta { freezePos.x - pos.x, freezePos.y - pos.y, freezePos.z - pos.z };
-
-    pos = pinned;
-    lp->getPosOld() = pinned;
-    lp->getVelocity() = Vec3 { 0.f, 0.f, 0.f };
-
-    AABB& box = lp->getBoundingBox();
-    box.lower = box.lower + boxDelta;
-    box.higher = box.higher + boxDelta;
-}
-
-void NoFall::onSendPacket(Event& evG) {
-    if (!chokeActive) return;
+    auto heldMs = freezeStartedAt == std::chrono::steady_clock::time_point {}
+                      ? 0
+                      : std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - freezeStartedAt)
+                            .count();
+    if (heldMs > 1200) {
+        freezeActive = false;
+        return;
+    }
 
     auto& ev = reinterpret_cast<SendPacketEvent&>(evG);
     auto* packet = ev.getPacket();
@@ -257,12 +246,6 @@ void NoFall::onSendPacket(Event& evG) {
     auto id = packet->getID();
     if (id != SDK::PacketID::PLAYER_AUTH_INPUT && id != SDK::PacketID::MOVE_PLAYER) return;
 
-    if (allowOnePacket) {
-        allowOnePacket = false;
-        return;
-    }
-
-    chokedPackets++;
     ev.setCancelled(true);
 }
 
@@ -306,7 +289,9 @@ void NoFall::restoreSlot(SDK::Player* lp) {
 }
 
 void NoFall::resetClutch() {
-    stopChoke();
+    freezeActive = false;
+    freezeTicksLeft = 0;
+    freezeStartedAt = {};
     state = ClutchState::Idle;
     lastAimFrame = {};
     clutchBucketSlot = -1;
@@ -316,14 +301,42 @@ void NoFall::resetClutch() {
     pickupStartedAt = {};
     pickupClickedAt = {};
     lastStateLog = {};
-    chokeStartedAt = {};
     sawFallingAfterPlace = false;
-    unfrozeAt = {};
 }
 
 void NoFall::abortClutch(SDK::Player* lp, char const* reason) {
     restoreSlot(lp);
     resetClutch();
+}
+
+NoFall::TunedParams NoFall::resolveParams(float velY, float heightAboveFace) const {
+    TunedParams out {};
+
+    if (!std::get<BoolValue>(autoTune).value) {
+        out.aimDistance = std::get<FloatValue>(aimDistance).value;
+        out.preSwitchDistance = std::get<FloatValue>(preSwitchDistance).value;
+        out.placeReach = std::get<FloatValue>(placeReach).value;
+        out.armTickLead = static_cast<int>(std::get<FloatValue>(armTickLead).value);
+        return out;
+    }
+
+    float speed = std::max(0.f, -velY);
+    float velT = (speed - tuneVelLow) / (tuneVelHigh - tuneVelLow);
+    out.placeReach = lerpClamped(tuneReachLow, tuneReachHigh, velT);
+
+    float logH = std::log10(std::max(1.f, heightAboveFace));
+    if (logH <= tuneLogMid) {
+        float t = (logH - tuneLogLow) / (tuneLogMid - tuneLogLow);
+        out.aimDistance = lerpClamped(tuneAimLow, tuneAimMid, t);
+        out.preSwitchDistance = tunePreSwitchLow;
+    } else {
+        float t = (logH - tuneLogMid) / (tuneLogHigh - tuneLogMid);
+        out.aimDistance = lerpClamped(tuneAimMid, tuneAimHigh, t);
+        out.preSwitchDistance = lerpClamped(tunePreSwitchLow, tunePreSwitchHigh, t);
+    }
+
+    out.armTickLead = tuneArmTicks;
+    return out;
 }
 
 float NoFall::getProtectionFactor(SDK::Player* lp, std::chrono::steady_clock::time_point now) {
@@ -334,26 +347,6 @@ float NoFall::getProtectionFactor(SDK::Player* lp, std::chrono::steady_clock::ti
     cachedProtection = fallProtectionFactor(lp);
     protectionCachedAt = now;
     return cachedProtection;
-}
-
-float NoFall::aimAtPoint(SDK::LocalPlayer* lp, Vec3 const& point) {
-    Vec3 eye = lp->getPos();
-    Vec3 dir = point - eye;
-    float dist = dir.magnitude();
-    if (dist < 0.01f) return dist;
-
-    Vec3 n = dir * (1.f / dist);
-    Vec2 desired {
-        std::clamp(-std::asin(std::clamp(n.y, -1.f, 1.f)) * (180.f / pi_f), -89.9f, 89.9f),
-        std::atan2(n.z, n.x) * (180.f / pi_f) - 90.f,
-    };
-
-    Vec2 current = lp->getRot();
-    Vec2 error { desired.x - current.x, wrapAngle(desired.y - current.y) };
-    if (std::abs(error.x) > 0.05f || std::abs(error.y) > 0.05f) {
-        lp->applyTurnDelta(Vec2 { -error.x, error.y });
-    }
-    return dist;
 }
 
 float NoFall::aimAtWater(SDK::LocalPlayer* lp) {
@@ -421,14 +414,6 @@ bool NoFall::runPickup(SDK::LocalPlayer* lp, std::chrono::steady_clock::time_poi
         return false;
     }
 
-    auto level = ci->minecraft ? ci->minecraft->getLevel() : nullptr;
-    auto liquidHit = level ? level->getLiquidHitResult() : nullptr;
-    bool liquidAimed = liquidHit && liquidHit->hitType != SDK::HitType::AIR;
-    if (!liquidAimed) {
-        if (elapsedMs < 800) return false;
-        return true;
-    }
-
     if (!SDK::MouseDevice::get()) return true;
 
     pushAction(2, true);
@@ -454,25 +439,14 @@ void NoFall::onUpdate(Event&) {
 
 void NoFall::runClutch() {
     auto ci = SDK::ClientInstance::get();
-    if (!ci || !ci->minecraft || !ci->minecraftGame) {
-        stopChoke();
-        return;
-    }
+    if (!ci || !ci->minecraft || !ci->minecraftGame) return;
     if (!ci->minecraftGame->isCursorGrabbed() ||
         Necromancer::get().getScreenManager().getActiveScreen()) {
-        if (chokeActive) {
-            auto lpNow = ci->getLocalPlayer();
-            restoreSlot(lpNow);
-            resetClutch();
-        }
         return;
     }
 
     auto lp = ci->getLocalPlayer();
-    if (!lp || !lp->supplies) {
-        stopChoke();
-        return;
-    }
+    if (!lp || !lp->supplies) return;
 
     auto now = std::chrono::steady_clock::now();
 
@@ -491,72 +465,25 @@ void NoFall::runClutch() {
         return;
     }
 
-    if (state == ClutchState::ChokePre || state == ClutchState::ChokePost) {
-        int wantTicks = static_cast<int>(std::get<FloatValue>(chokeTicks).value);
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - chokeStartedAt).count();
-        bool ticksDone = chokedPackets >= wantTicks || elapsed >= wantTicks * 50 + 200;
-
-        aimAtPoint(lp, chokeAimPoint);
-
-        if (state == ClutchState::ChokePre) {
-            if (!ticksDone) return;
-            stopChoke();
-            allowOnePacket = true;
-            state = ClutchState::ChokeRelease;
-            chokeStartedAt = now;
-            return;
-        }
+    if (state == ClutchState::Frozen) {
+        auto frozenMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - freezeStartedAt).count();
+        auto wantMs = static_cast<long long>(freezeTicksLeft) * 50;
 
         auto* region = ci->getRegion();
         bool waterThere = region && MovementSim::isLiquidAt(region, placedWaterPos);
-        if (waterThere || ticksDone) {
-            stopChoke();
-            if (waterThere && std::get<BoolValue>(pickUpWater)) {
-                state = ClutchState::WaitLanding;
-                landedAt = {};
-                lastStateLog = {};
-                placedAt = now;
-                sawFallingAfterPlace = false;
-            } else {
-                restoreSlot(lp);
-                resetClutch();
-                cooldownUntil = now + std::chrono::milliseconds(600);
-            }
-        }
-        return;
-    }
 
-    if (state == ClutchState::ChokeRelease) {
-        aimAtPoint(lp, chokeAimPoint);
+        if (frozenMs < wantMs && !lp->isOnGround()) return;
 
-        auto level = ci->minecraft->getLevel();
-        auto hit = level ? level->getHitResult() : nullptr;
-        bool canPlace = hit && hit->hitType == SDK::HitType::BLOCK && hit->face == 1;
-        auto waitedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - chokeStartedAt).count();
-
-        if (!canPlace) {
-            if (waitedMs < 200) return;
-            Logger::Warn("[NoFall] choke release: no top face to place on, aborting");
-            restoreSlot(lp);
-            resetClutch();
-            cooldownUntil = now + std::chrono::milliseconds(400);
-            return;
-        }
-
-        if (clutchBucketSlot >= 0 && lp->supplies->selectedSlot != clutchBucketSlot) {
-            lp->supplies->selectedSlot = clutchBucketSlot;
-        }
-        placedWaterPos = BlockPos { hit->hitBlock.x, hit->hitBlock.y + 1, hit->hitBlock.z };
-        pushAction(2, true);
-        pushAction(2, false);
-        placeAttempts++;
-
-        startChoke();
-        chokeStartedAt = now;
-        state = ClutchState::ChokePost;
+        freezeActive = false;
+        state = ClutchState::Placed;
         placedAt = now;
-        fallDistance = 0.f;
-        hasLastY = false;
+
+        if (waterThere && std::get<BoolValue>(pickUpWater)) {
+            state = ClutchState::WaitLanding;
+            landedAt = {};
+            lastStateLog = {};
+            sawFallingAfterPlace = false;
+        }
         return;
     }
 
@@ -624,6 +551,13 @@ void NoFall::runClutch() {
 
         bool onGround = lp->isOnGround();
         float velY = lp->getVelocity().y;
+        AABB const& playerBox = lp->getBoundingBox();
+        bool reachedWater = playerBox.higher.x >= static_cast<float>(placedWaterPos.x) &&
+                            playerBox.lower.x <= static_cast<float>(placedWaterPos.x) + 1.f &&
+                            playerBox.higher.y >= static_cast<float>(placedWaterPos.y) &&
+                            playerBox.lower.y <= static_cast<float>(placedWaterPos.y) + 1.f &&
+                            playerBox.higher.z >= static_cast<float>(placedWaterPos.z) &&
+                            playerBox.lower.z <= static_cast<float>(placedWaterPos.z) + 1.f;
         auto waitedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - placedAt).count();
 
         if (waitedMs > 8000) {
@@ -634,16 +568,14 @@ void NoFall::runClutch() {
         }
 
         if (!sawFallingAfterPlace) {
-            if (onGround) {
+            if (reachedWater || onGround) {
                 sawFallingAfterPlace = true;
             } else if (velY < -0.15f) {
                 sawFallingAfterPlace = true;
             } else {
-                auto sinceUnfreeze =
-                    unfrozeAt == std::chrono::steady_clock::time_point {}
-                        ? 0
-                        : std::chrono::duration_cast<std::chrono::milliseconds>(now - unfrozeAt).count();
-                if (sinceUnfreeze > 600) {
+                auto sincePlace =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(now - placedAt).count();
+                if (sincePlace > 600) {
                     sawFallingAfterPlace = true;
                 }
                 return;
@@ -651,7 +583,16 @@ void NoFall::runClutch() {
         }
 
         bool stopped = velY > -0.08f;
-        if (!onGround && !stopped) return;
+        if (!reachedWater && !onGround && !stopped) {
+            landedAt = {};
+            return;
+        }
+
+        if (landedAt == std::chrono::steady_clock::time_point {}) {
+            landedAt = now;
+            return;
+        }
+        if (now - landedAt < std::chrono::milliseconds(50)) return;
 
         state = ClutchState::PickingUp;
         pickupStartedAt = {};
@@ -747,12 +688,13 @@ void NoFall::runClutch() {
     Vec3 aimPoint { faceCx, landing->faceY, faceCz };
     float heightAboveFace = eye.y - landing->faceY;
     int ticksLeft = landing->ticksToImpact;
+    TunedParams tuned = resolveParams(velY, totalFall);
 
     if (state == ClutchState::Idle) {
-        float aimRange = std::get<FloatValue>(aimDistance).value;
+        float aimRange = tuned.aimDistance;
         float brakingDist = std::max(6.f, -velY * 10.f);
         float trigger = std::max(aimRange, brakingDist);
-        int armTicks = static_cast<int>(std::get<FloatValue>(armTickLead).value);
+        int armTicks = tuned.armTickLead;
         if (heightAboveFace > trigger && ticksLeft > armTicks) return;
 
         state = ClutchState::Aiming;
@@ -762,7 +704,7 @@ void NoFall::runClutch() {
     }
 
     if (!preSwitched) {
-        float switchRange = std::get<FloatValue>(preSwitchDistance).value;
+        float switchRange = tuned.preSwitchDistance;
         float switchTrigger = std::max(switchRange, -velY * 8.f);
         if (heightAboveFace <= switchTrigger || ticksLeft <= 6) {
             originalSlot = lp->supplies->selectedSlot;
@@ -805,7 +747,7 @@ void NoFall::runClutch() {
         lp->applyTurnDelta(Vec2 { -step.x, step.y });
     }
 
-    float reachMax = std::get<FloatValue>(placeReach).value;
+    float reachMax = tuned.placeReach;
     float reachSafe = std::max(2.5f, reachMax - 0.4f);
 
     float nextVelY = advanceVelY(velY);
@@ -819,19 +761,9 @@ void NoFall::runClutch() {
     bool inReach = dist <= reachMax;
     bool aimTight = std::abs(error.x) <= angTol && std::abs(error.y) <= angTol;
     bool wouldOvershoot = nextHeight <= 1.5f || nextDist <= reachSafe || thenDist <= reachSafe || ticksLeft <= 2;
+
     if (!inReach) return;
     if (!aimTight && !wouldOvershoot) return;
-
-    if (std::get<BoolValue>(useFakelag)) {
-        chokeAimPoint = aimPoint;
-        placeTargetBlock = landing->landingBlock;
-        if (originalSlot < 0) originalSlot = lp->supplies->selectedSlot;
-        clutchBucketSlot = bucketSlot;
-        startChoke();
-        chokeStartedAt = now;
-        state = ClutchState::ChokePre;
-        return;
-    }
 
     auto level = ci->minecraft->getLevel();
     auto hit = level ? level->getHitResult() : nullptr;
@@ -850,9 +782,18 @@ void NoFall::runClutch() {
     placedWaterPos = BlockPos { hit->hitBlock.x, hit->hitBlock.y + 1, hit->hitBlock.z };
     placeTargetBlock = hit->hitBlock;
     if (lp->supplies->selectedSlot != bucketSlot) lp->supplies->selectedSlot = bucketSlot;
+
+    bool wantFreeze = std::get<BoolValue>(useFakelag).value && lp->aabbShape && lp->stateVector;
+    if (wantFreeze) {
+        freezeTicksLeft = std::max(1, static_cast<int>(std::get<FloatValue>(freezeTicks).value));
+        freezeStartedAt = now;
+        freezeActive = true;
+        state = ClutchState::Frozen;
+    }
+
     pushAction(2, true);
     pushAction(2, false);
-    state = ClutchState::Placed;
+    if (!wantFreeze) state = ClutchState::Placed;
     placedAt = now;
     placeAttempts = 1;
     fallDistance = 0.f;

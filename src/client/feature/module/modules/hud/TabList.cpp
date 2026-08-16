@@ -98,18 +98,25 @@ bool TabList::refreshActivePlayerNames(SDK::Level* level) {
 
 void TabList::syncNameTagCache(SDK::Level* level) {
     auto& nameTags = Necromancer::get().getNameTagCache();
-    bool playersChanged = refreshActivePlayerNames(level);
-    uint64_t networkRevision = nameTags.getNetworkNameTagsRevision();
-    bool networkChanged = cachedNetworkNameTagsRevision != networkRevision;
+    if (level) {
+        for (auto* actor : level->getRuntimeActorList()) {
+            if (!actor || !actor->isPlayer()) continue;
+            nameTags.recordActorNameTag(actor->getRuntimeID(), actor->getNameTag());
+        }
+    }
 
-    if (playersChanged || networkChanged) {
-        if (networkChanged) {
+    bool playersChanged = refreshActivePlayerNames(level);
+    uint64_t actorNameTagsRevision = nameTags.getActorNameTagsRevision();
+    bool actorNameTagsChanged = cachedActorNameTagsRevision != actorNameTagsRevision;
+
+    if (playersChanged || actorNameTagsChanged) {
+        if (actorNameTagsChanged) {
             rowsDirty = true;
         }
         if (nameTags.updateFormattedPlayerNames(cachedActivePlayerNames)) {
             rowsDirty = true;
         }
-        cachedNetworkNameTagsRevision = networkRevision;
+        cachedActorNameTagsRevision = actorNameTagsRevision;
     }
 }
 
@@ -309,8 +316,9 @@ void TabList::onRenderLayer(Event& evG) {
     float textP = getFloatOrDefault(textSizeS, 20.f);
 
     std::wstring txt;
-    if (SDK::RakNetConnector::get() && SDK::RakNetConnector::get()->featuredServer.size() > 0) {
-        txt = util::StrToWStr(SDK::RakNetConnector::get()->featuredServer);
+    auto* connectionInfo = SDK::RemoteConnectorComposite::getConnectionInfo();
+    if (connectionInfo && !connectionInfo->thirdPartyServerInfo.creatorName.empty()) {
+        txt = util::StrToWStr(connectionInfo->thirdPartyServerInfo.creatorName);
     } else {
         txt = util::StrToWStr(lvl->getLevelName());
     }
@@ -388,10 +396,12 @@ void TabList::onRenderLayer(Event& evG) {
         textRect.left += rowTextOffset;
 
         d2d::Color rowColor = textColor.getMainColor();
+        std::wstring const* rowText = &row.displayNameWide;
         if (auto* tag = PlayerListManager::get().getColorTag(row.playerName)) {
             rowColor = d2d::Color(tag->r, tag->g, tag->b, rowColor.a);
+            rowText = &row.strippedNameWide;
         }
-        dc.drawText(textRect, row.displayNameWide, rowColor, font, textP, DWRITE_TEXT_ALIGNMENT_LEADING,
+        dc.drawText(textRect, *rowText, rowColor, font, textP, DWRITE_TEXT_ALIGNMENT_LEADING,
                     DWRITE_PARAGRAPH_ALIGNMENT_NEAR, false);
     }
 

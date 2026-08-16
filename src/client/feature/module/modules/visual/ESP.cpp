@@ -264,6 +264,10 @@ void ESP::onRenderLevel(RenderLevelEvent& event) {
     d2d::Color losBase(losColVal.getMainColor());
 
     auto snap = EntityCache::get().snapshot();
+    std::vector<MCDrawUtil3D::ColoredThickBox> hitboxBatch;
+    std::vector<MCDrawUtil3D::ColoredThickLine> losBatch;
+    hitboxBatch.reserve(snap->views.size());
+    losBatch.reserve(snap->views.size());
     for (auto const& view : snap->views) {
         SDK::Actor* entt = view.actor;
         if (!entt || entt == lp) continue;
@@ -281,7 +285,7 @@ void ESP::onRenderLevel(RenderLevelEvent& event) {
         bb.rebase(newPos - Vec3 { 0.f, eyeOffset, 0.f } + Vec3 { 0.f, (bb.higher.y - bb.lower.y) / 2.f, 0.f });
 
         if (doHitbox) {
-            dc.drawThickBox(bb, boxTh, resolveEntityColor(hitboxColVal, hitboxBase, entt));
+            hitboxBatch.push_back({ bb, boxTh, resolveEntityColor(hitboxColVal, hitboxBase, entt) });
         }
 
         if (doLos && !view.isItem) {
@@ -295,11 +299,12 @@ void ESP::onRenderLevel(RenderLevelEvent& event) {
             Vec3 end = begin + Vec3 { cos(calcYaw) * cos(calcPitch), sin(calcPitch),
                                       sin(calcYaw) * cos(calcPitch) };
 
-            dc.drawThickLine(begin, end, losTh, resolveEntityColor(losColVal, losBase, entt));
+            losBatch.push_back({ begin, end, losTh, resolveEntityColor(losColVal, losBase, entt) });
         }
     }
 
-    dc.flush();
+    dc.drawThickBoxes(hitboxBatch);
+    dc.drawThickLines(losBatch);
 }
 
 namespace {

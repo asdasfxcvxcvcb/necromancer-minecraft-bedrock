@@ -52,10 +52,12 @@ namespace {
 
     std::shared_ptr<Hook> sendHook;
     std::atomic<uint32_t> latencyMs { 0 };
+    std::atomic<bool> choking { false };
     std::atomic<bool> installed { false };
     std::atomic<bool> running { false };
     std::atomic<uint64_t> held { 0 };
     std::atomic<uint64_t> passed { 0 };
+    std::atomic<uint64_t> choked { 0 };
 
     // One-shot bypass, armed by the packet layer right before an attack is sent.
     std::atomic<int> bypassCount { 0 };
@@ -70,11 +72,40 @@ namespace {
             .count();
     }
 
+    constexpr size_t maxQueuedDatagrams = 2048;
+
+    std::mutex sendGate;
     std::mutex queueLock;
     std::deque<HeldDatagram> queue;
+    std::deque<HeldDatagram> chokeQueue;
     std::thread releaseThread;
 
     using SendFn = int64_t (*)(void*, void*);
+
+    void sendDatagram(HeldDatagram& datagram) {
+        if (datagram.sock == INVALID_SOCKET || datagram.bytes.empty()) return;
+        ::sendto(datagram.sock, datagram.bytes.data(), static_cast<int>(datagram.bytes.size()), 0,
+                 reinterpret_cast<sockaddr*>(&datagram.to), datagram.toLen);
+    }
+
+    HeldDatagram captureDatagram(void* self, uint8_t* base, char const* data, uint32_t len, uint16_t family) {
+        HeldDatagram datagram;
+        datagram.sock =
+            static_cast<SOCKET>(*reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(self) + socketHandleOffset));
+        datagram.toLen = family == familyIPv6 ? 28 : 16;
+        std::memcpy(&datagram.to, base + sendParamAddrOffset, static_cast<size_t>(datagram.toLen));
+        datagram.bytes.assign(data, data + len);
+        return datagram;
+    }
+
+    void drainQueueLocked(std::deque<HeldDatagram>& source) {
+        std::deque<HeldDatagram> pending;
+        {
+            std::lock_guard lk(queueLock);
+            pending.swap(source);
+        }
+        for (auto& datagram : pending) sendDatagram(datagram);
+    }
 
     // RakNet datagram header bits. A datagram is only delayed when it is
     // positively identified as plain reliable/unreliable data. ACK and NAK
@@ -100,17 +131,14 @@ namespace {
             for (;;) {
                 HeldDatagram out;
                 {
-                    std::lock_guard lk(queueLock);
-                    if (queue.empty() || queue.front().releaseAt > now) break;
-                    out = std::move(queue.front());
-                    queue.pop_front();
-                }
-                if (out.sock != INVALID_SOCKET && !out.bytes.empty()) {
-                    // Send straight through Winsock rather than re-entering
-                    // RakNet: the socket object may be gone by now, but the
-                    // OS handle plus the captured address are self-contained.
-                    ::sendto(out.sock, out.bytes.data(), static_cast<int>(out.bytes.size()), 0,
-                             reinterpret_cast<sockaddr*>(&out.to), out.toLen);
+                    std::lock_guard sendLock(sendGate);
+                    {
+                        std::lock_guard lk(queueLock);
+                        if (queue.empty() || queue.front().releaseAt > now) break;
+                        out = std::move(queue.front());
+                        queue.pop_front();
+                    }
+                    sendDatagram(out);
                 }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -118,8 +146,10 @@ namespace {
     }
 
     int64_t detour(void* self, void* params) {
+        std::lock_guard sendLock(sendGate);
         uint32_t delay = latencyMs.load(std::memory_order_relaxed);
-        if (delay == 0 || !params) {
+        bool holdForChoke = choking.load(std::memory_order_acquire);
+        if ((!holdForChoke && delay == 0) || !params) {
             passed.fetch_add(1, std::memory_order_relaxed);
             return sendHook->oFunc<SendFn>()(self, params);
         }
@@ -170,20 +200,30 @@ namespace {
             bypassCount.store(0, std::memory_order_relaxed);
         }
 
-        // Copy the handle, address and payload so nothing is referenced after this
-        // call returns. tolen matches the original: 16 for IPv4, 28 for IPv6.
-        HeldDatagram hd;
-        hd.sock = static_cast<SOCKET>(*reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(self) + socketHandleOffset));
-        hd.toLen = (family == familyIPv6) ? 28 : 16;
-        std::memcpy(&hd.to, addr, static_cast<size_t>(hd.toLen));
-        hd.bytes.assign(data, data + len);
+        if (holdForChoke) {
+            auto datagram = captureDatagram(self, base, data, len, family);
+            {
+                std::lock_guard lk(queueLock);
+                if (!choking.load(std::memory_order_acquire)) {
+                    sendDatagram(datagram);
+                    passed.fetch_add(1, std::memory_order_relaxed);
+                    return static_cast<int64_t>(len);
+                }
+                if (chokeQueue.size() >= maxQueuedDatagrams) chokeQueue.pop_front();
+                chokeQueue.push_back(std::move(datagram));
+            }
+            choked.fetch_add(1, std::memory_order_relaxed);
+            return static_cast<int64_t>(len);
+        }
+
+        HeldDatagram hd = captureDatagram(self, base, data, len, family);
         hd.releaseAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(delay);
 
         {
             std::lock_guard lk(queueLock);
             // Bounded so a stall cannot grow without limit. At ~60 datagrams/s
             // even a 1s delay only needs a fraction of this.
-            if (queue.size() >= 512) queue.pop_front();
+            if (queue.size() >= maxQueuedDatagrams) queue.pop_front();
             queue.push_back(std::move(hd));
         }
         held.fetch_add(1, std::memory_order_relaxed);
@@ -210,25 +250,46 @@ namespace LatencySpoof {
     }
 
     void shutdown() {
+        choking.store(false, std::memory_order_release);
         latencyMs.store(0, std::memory_order_release);
         running.store(false, std::memory_order_release);
         if (releaseThread.joinable()) releaseThread.join();
         {
-            std::lock_guard lk(queueLock);
-            queue.clear();
+            std::lock_guard sendLock(sendGate);
+            drainQueueLocked(queue);
+            drainQueueLocked(chokeQueue);
         }
         installed.store(false, std::memory_order_release);
     }
 
     void setLatency(uint32_t ms) {
+        std::lock_guard sendLock(sendGate);
         latencyMs.store(ms, std::memory_order_relaxed);
-        if (ms == 0) {
-            std::lock_guard lk(queueLock);
-            queue.clear();
-        }
+        if (ms == 0) drainQueueLocked(queue);
     }
 
     uint32_t getLatency() { return latencyMs.load(std::memory_order_relaxed); }
+
+    void setChoking(bool enabled) {
+        std::lock_guard sendLock(sendGate);
+        if (enabled) {
+            drainQueueLocked(queue);
+            choking.store(true, std::memory_order_release);
+            return;
+        }
+        if (!choking.exchange(false, std::memory_order_acq_rel)) return;
+        drainQueueLocked(chokeQueue);
+    }
+
+    void clearChoke() {
+        std::lock_guard sendLock(sendGate);
+        choking.store(false, std::memory_order_release);
+        std::lock_guard queueGuard(queueLock);
+        chokeQueue.clear();
+    }
+
+    bool isChoking() { return choking.load(std::memory_order_acquire); }
+    uint64_t chokedCount() { return choked.load(std::memory_order_relaxed); }
 
     void requestBypass(int count) {
         if (count < 1) return;

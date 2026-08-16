@@ -55,8 +55,11 @@ Vec3& SDK::Actor::getPosOld() {
 }
 
 int SDK::Actor::getCommandPermissionLevel() {
-    // @dump-wbds vtable Actor, getCommandPermissionLevel
-    return memory::callVirtual<int>(this, 0x66);
+    return memory::callVirtual<int>(this, Signatures::VtableIndex::Actor::getCommandPermissionLevel);
+}
+
+std::string const& SDK::Actor::getNameTag() const {
+    return reinterpret_cast<std::string const&(__fastcall*)(Actor const*)>(Signatures::Actor_getNameTag.result)(this);
 }
 
 void SDK::Actor::setNameTag(std::string* nametag) {
@@ -130,18 +133,15 @@ std::string SDK::Actor::getEntityNamespace() {
 }
 
 void const* SDK::Actor::getActorRendererId() {
-    // render gets the usual renderer id from vfunc 69 right now
-    return memory::callVirtual<void const*>(this, 0x45);
+    return memory::callVirtual<void const*>(this, Signatures::VtableIndex::Actor::getActorRendererId);
 }
 
 void const* SDK::Actor::getActorRendererIdOverride() {
-    // some actors use this one instead of the query renderer id
-    return memory::callVirtual<void const*>(this, 0x52);
+    return memory::callVirtual<void const*>(this, Signatures::VtableIndex::Actor::getActorRendererIdOverride);
 }
 
 void SDK::Actor::swing() {
-    // @dump-wbds vtable Actor, swing
-    return memory::callVirtual<void>(this, 0x6E);
+    return memory::callVirtual<void>(this, Signatures::VtableIndex::Actor::swing);
 }
 
 bool SDK::Actor::isPlayer() {
@@ -187,8 +187,7 @@ std::optional<float> SDK::Actor::getSaturation() {
 }
 
 bool SDK::Actor::isInvisible() {
-    // @dump-wbds Actor, isInvisible
-    return memory::callVirtual<bool>(this, 0x1F);
+    return memory::callVirtual<bool>(this, Signatures::VtableIndex::Actor::isInvisible);
 }
 
 bool SDK::Actor::isOnGround() {

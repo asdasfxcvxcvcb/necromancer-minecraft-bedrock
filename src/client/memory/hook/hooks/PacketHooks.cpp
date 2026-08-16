@@ -1,8 +1,6 @@
 ﻿#include "pch.h"
 #include "PacketHooks.h"
 #include <mc/common/network/MinecraftPackets.h>
-#include <mc/common/network/packet/AddPlayerPacket.h>
-#include <mc/common/network/packet/SetActorDataPacket.h>
 #include <limits>
 #include <type_traits>
 #include <unordered_map>
@@ -68,21 +66,7 @@ void PacketHooks::PacketHandlerDispatcherInstance_handle(void* instance, void* n
                 return;
             }
         } else if (packetId == SDK::PacketID::CHANGE_DIMENSION) {
-            Necromancer::get().getNameTagCache().clearNetworkNameTags();
-        } else if (packetId == SDK::PacketID::ADD_PLAYER) {
-            SDK::AddPlayerPacket* addPlayer = static_cast<SDK::AddPlayerPacket*>(packet.get());
-            uint64_t runtimeId = 0;
-            std::string nameTag;
-            if (addPlayer->tryGetNameTag(&runtimeId, &nameTag)) {
-                Necromancer::get().getNameTagCache().recordNetworkNameTag(runtimeId, nameTag);
-            }
-        } else if (packetId == SDK::PacketID::SET_ENTITY_DATA) {
-            SDK::SetActorDataPacket* setActorData = static_cast<SDK::SetActorDataPacket*>(packet.get());
-            uint64_t runtimeId = 0;
-            std::string nameTag;
-            if (setActorData->tryGetNameTag(&runtimeId, &nameTag)) {
-                Necromancer::get().getNameTagCache().recordNetworkNameTag(runtimeId, nameTag);
-            }
+            Necromancer::get().getNameTagCache().clearActorNameTags();
         }
     }
 

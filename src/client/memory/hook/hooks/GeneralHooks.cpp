@@ -8,7 +8,7 @@
 #include "PlayerHooks.h"
 #include "client/event/events/MouseReleaseEvent.h"
 #include "client/screen/ScreenManager.h"
-#include "mc/common/client/game/GameCore.h"
+#include "mc/common/client/game/Platform_GameCore.h"
 #include "mc/common/client/game/MouseDevice.h"
 #include "mc/common/client/input/ClientInputHandler.h"
 #include "mc/common/client/player/LocalPlayer.h"
@@ -95,10 +95,10 @@ LRESULT GenericHooks::MainWindow__windowProcCallback(HWND hwnd, UINT msg, WPARAM
                                                      LPARAM lParam) { // Name from China
     if (msg == WM_SETCURSOR) {
         std::optional<std::reference_wrapper<Screen>> activeScreen = Necromancer::get().getScreenManager().getActiveScreen();
-        SDK::GameCore* gameCore = SDK::GameCore::get();
-        constexpr uintptr_t mouseGrabbedOffset = 0x778; // GameCore::mMouseGrabbed, set by GDK grab/release mouse.
+        SDK::Platform_GameCore* platform = SDK::Platform_GameCore::get();
+        constexpr uintptr_t mouseGrabbedOffset = 0x7D8;
         const bool gameMouseGrabbed =
-            gameCore && *reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(gameCore) + mouseGrabbedOffset);
+            platform && *reinterpret_cast<uint8_t*>(reinterpret_cast<uintptr_t>(platform) + mouseGrabbedOffset);
 
         if (!activeScreen && gameMouseGrabbed) {
             SetCursor(nullptr);
@@ -362,16 +362,15 @@ Color* GenericHooks::hkGetFogColor(SDK::Dimension* obj, Color* out, SDK::Actor* 
     return out;
 }
 
-SDK::GuiMessage& GenericHooks::hkAddMessage(void* obj, SDK::GuiMessage& msg) {
-    // MessageContext
+void GenericHooks::hkAddMessage(void* obj, SDK::GuiMessage& msg) {
     std::string& str = msg.message;
 
     ChatMessageEvent ev { str };
     if (Eventing::get().dispatch(ev)) {
-        return *(SDK::ClientInstance::get()->getGuiData()->messages.end() - 1);
+        return;
     }
 
-    return AddMessageHook->oFunc<decltype(&hkAddMessage)>()(obj, msg);
+    AddMessageHook->oFunc<decltype(&hkAddMessage)>()(obj, msg);
 }
 
 void GenericHooks::hkUpdatePlayer(SDK::CameraComponent* obj, void* a, void* b) {
@@ -479,7 +478,8 @@ GenericHooks::GenericHooks()
     FogColorHook = addHook(Signatures::Dimension_getSkyColor.result, hkGetFogColor, "Dimension::getFogColor");
     GetTimeOfDayHook = addHook(Signatures::Dimension_getTimeOfDay.result, hkGetTimeOfDay, "Dimension::getTimeOfDay");
     DimensionHook = addHook(Signatures::Dimension_tick.result, hkDimensionTick, "Dimension::tick");
-    AddMessageHook = addHook(Signatures::GuiData__addMessage.result, hkAddMessage, "GuiData::_addMessage");
+    AddMessageHook = addHook(Signatures::GuiMessageVector_emplaceBack.result, hkAddMessage,
+                              "std::vector<GuiMessage>::emplace_back");
     UpdatePlayerHook =
         addHook(Signatures::_updatePlayer.result, hkUpdatePlayer, "`anonymous namespace'::_updatePlayer");
     OnUriHook = addHook(Signatures::GameArguments__onUri.result, hkOnUri, "GameArguments::_onUri");

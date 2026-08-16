@@ -81,6 +81,7 @@ private:
     std::chrono::steady_clock::time_point lastSweep {};
     BlockPos scanCenter {};
     int scanCursor = 0;
+    int scanY = -64;
     bool scanActive = false;
     bool scanDirty = true;
 };

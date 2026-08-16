@@ -28,7 +28,7 @@
 #include "modules/game/NoFall.h"
 #include "modules/game/Fakelag.h"
 #include "modules/game/Backtrack.h"
-#include "modules/game/ForwardTrack.h"
+#include "modules/game/AfterTrack.h"
 #include "modules/game/Velocity.h"
 #include "modules/game/AntiAFK.h"
 
@@ -105,7 +105,7 @@ ModuleManager::ModuleManager() {
     this->items.push_back(std::make_shared<NoFall>());
     this->items.push_back(std::make_shared<Fakelag>());
     this->items.push_back(std::make_shared<Backtrack>());
-    this->items.push_back(std::make_shared<ForwardTrack>());
+    this->items.push_back(std::make_shared<AfterTrack>());
     this->items.push_back(std::make_shared<Velocity>());
     this->items.push_back(std::make_shared<AntiAFK>());
     this->items.push_back(std::make_shared<ESP>());

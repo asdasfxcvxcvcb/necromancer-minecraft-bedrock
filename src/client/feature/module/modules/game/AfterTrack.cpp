@@ -1,5 +1,5 @@
 #include "pch.h"
-#include "ForwardTrack.h"
+#include "AfterTrack.h"
 #include "client/event/events/UpdateEvent.h"
 #include "client/event/events/AveragePingEvent.h"
 #include "client/event/events/AttackEvent.h"
@@ -23,79 +23,88 @@
 #include "mc/common/network/PacketSender.h"
 #include <util/DrawUtil3D.h>
 #include <cmath>
+#include <unordered_set>
 
-ForwardTrack::ForwardTrack()
-    : Module("ForwardTrack", LocalizeString::get("client.module.forwardTrack.name"),
-             LocalizeString::get("client.module.forwardTrack.desc"), GAME, nokeybind) {
-    auto simSet = addSliderSetting("maxSim", LocalizeString::get("client.module.forwardTrack.maxSim.name"),
-                     LocalizeString::get("client.module.forwardTrack.maxSim.desc"), maxSim, FloatValue(0.f),
+AfterTrack::AfterTrack()
+    : Module("AfterTrack", LocalizeString::get("client.module.afterTrack.name"),
+             LocalizeString::get("client.module.afterTrack.desc"), GAME, nokeybind) {
+    auto simSet = addSliderSetting("maxSim", LocalizeString::get("client.module.afterTrack.maxSim.name"),
+                     LocalizeString::get("client.module.afterTrack.maxSim.desc"), maxSim, FloatValue(0.f),
                      FloatValue(300.f), FloatValue(1.f));
     simSet->floatEditMax = static_cast<float>(maxSimCeilingMs);
 
-    addSetting("useStackLatency", LocalizeString::get("client.module.forwardTrack.useStackLatency.name"),
-               LocalizeString::get("client.module.forwardTrack.useStackLatency.desc"), useStackLatency);
-    addSetting("hitbox", LocalizeString::get("client.module.forwardTrack.hitbox.name"),
-               LocalizeString::get("client.module.forwardTrack.hitbox.desc"), hitbox);
-    addSetting("hitboxColor", LocalizeString::get("client.module.forwardTrack.hitboxColor.name"),
-               LocalizeString::get("client.module.forwardTrack.hitboxColor.desc"), hitboxColor, "hitbox"_istrue);
-    hitboxStyle.addEntry(EnumEntry(style_outline, LocalizeString::get("client.module.forwardTrack.hitboxStyle.outline.name"),
-                                   LocalizeString::get("client.module.forwardTrack.hitboxStyle.outline.desc")));
-    hitboxStyle.addEntry(EnumEntry(style_filled, LocalizeString::get("client.module.forwardTrack.hitboxStyle.filled.name"),
-                                   LocalizeString::get("client.module.forwardTrack.hitboxStyle.filled.desc")));
-    hitboxStyle.addEntry(EnumEntry(style_both, LocalizeString::get("client.module.forwardTrack.hitboxStyle.both.name"),
-                                   LocalizeString::get("client.module.forwardTrack.hitboxStyle.both.desc")));
-    addEnumSetting("hitboxStyle", LocalizeString::get("client.module.forwardTrack.hitboxStyle.name"),
-                   LocalizeString::get("client.module.forwardTrack.hitboxStyle.desc"), hitboxStyle, "hitbox"_istrue);
+    addSetting("useStackLatency", LocalizeString::get("client.module.afterTrack.useStackLatency.name"),
+               LocalizeString::get("client.module.afterTrack.useStackLatency.desc"), useStackLatency);
+    addSetting("hitbox", LocalizeString::get("client.module.afterTrack.hitbox.name"),
+               LocalizeString::get("client.module.afterTrack.hitbox.desc"), hitbox);
+    addSetting("hitboxColor", LocalizeString::get("client.module.afterTrack.hitboxColor.name"),
+               LocalizeString::get("client.module.afterTrack.hitboxColor.desc"), hitboxColor, "hitbox"_istrue);
+    hitboxStyle.addEntry(EnumEntry(style_outline, LocalizeString::get("client.module.afterTrack.hitboxStyle.outline.name"),
+                                   LocalizeString::get("client.module.afterTrack.hitboxStyle.outline.desc")));
+    hitboxStyle.addEntry(EnumEntry(style_filled, LocalizeString::get("client.module.afterTrack.hitboxStyle.filled.name"),
+                                   LocalizeString::get("client.module.afterTrack.hitboxStyle.filled.desc")));
+    hitboxStyle.addEntry(EnumEntry(style_both, LocalizeString::get("client.module.afterTrack.hitboxStyle.both.name"),
+                                   LocalizeString::get("client.module.afterTrack.hitboxStyle.both.desc")));
+    addEnumSetting("hitboxStyle", LocalizeString::get("client.module.afterTrack.hitboxStyle.name"),
+                   LocalizeString::get("client.module.afterTrack.hitboxStyle.desc"), hitboxStyle, "hitbox"_istrue);
+    Setting::Condition outlineCondition(std::vector<Setting::SingleCond> {
+        { "hitbox", { 1 }, false },
+        { "hitboxStyle", { style_outline, style_both }, false },
+    });
+    addSliderSetting("hitboxThickness", LocalizeString::get("client.module.afterTrack.hitboxThickness.name"),
+                     LocalizeString::get("client.module.afterTrack.hitboxThickness.desc"), hitboxThickness,
+                     FloatValue(0.1f), FloatValue(1.f), FloatValue(0.1f), outlineCondition);
 
-    this->listen<UpdateEvent>(&ForwardTrack::onUpdate);
-    this->listen<AveragePingEvent>(&ForwardTrack::onAvgPing, true);
-    this->listen<AttackEvent>(&ForwardTrack::onAttack);
-    this->listen<SendPacketEvent>(&ForwardTrack::onSendPacket);
-    this->listen<LeaveGameEvent>(&ForwardTrack::onLeaveGame);
-    Eventing::get().listen<RenderLevelEvent, &ForwardTrack::onRenderLevel>(this);
+    this->listen<UpdateEvent>(&AfterTrack::onUpdate);
+    this->listen<AveragePingEvent>(&AfterTrack::onAvgPing, true);
+    this->listen<AttackEvent>(&AfterTrack::onAttack);
+    this->listen<SendPacketEvent>(&AfterTrack::onSendPacket);
+    this->listen<LeaveGameEvent>(&AfterTrack::onLeaveGame);
+    Eventing::get().listen<RenderLevelEvent, &AfterTrack::onRenderLevel>(this);
 }
 
-void ForwardTrack::clearState() {
+void AfterTrack::clearState() {
     velHistory.clear();
     predictions.clear();
     predValid.clear();
     lastPingMs = 0;
     pingKnown = false;
+    nextPredictionAt = {};
     pendingAttackRID = 0;
     probeInFlight = false;
 }
 
-void ForwardTrack::onEnable() {
+void AfterTrack::onEnable() {
     clearState();
 }
 
-void ForwardTrack::onDisable() {
+void AfterTrack::onDisable() {
     clearState();
 }
 
-void ForwardTrack::onLeaveGame(Event&) {
+void AfterTrack::onLeaveGame(Event&) {
     clearState();
 }
 
-void ForwardTrack::onAvgPing(Event& evG) {
+void AfterTrack::onAvgPing(Event& evG) {
     auto& ev = reinterpret_cast<AveragePingEvent&>(evG);
     lastPingMs = ev.getPing();
     pingKnown = true;
 }
 
-float ForwardTrack::effectiveSimMs() const {
+float AfterTrack::effectiveSimMs() const {
     if (!pingKnown || lastPingMs <= 0) return 0.f;
     float cap = std::clamp(std::get<FloatValue>(maxSim).value, 0.f, static_cast<float>(maxSimCeilingMs));
     return std::clamp(static_cast<float>(lastPingMs), 0.f, cap);
 }
 
-Vec3 ForwardTrack::lookDirFromRot(Vec2 rot) const {
+Vec3 AfterTrack::lookDirFromRot(Vec2 rot) const {
     float yaw = (rot.y + 90.f) * (pi_f / 180.f);
     float pitch = rot.x * -(pi_f / 180.f);
     return { cosf(yaw) * cosf(pitch), 0.f, sinf(yaw) * cosf(pitch) };
 }
 
-Vec3 ForwardTrack::blendedVelocity(uint64_t rid, Vec3 liveVel) const {
+Vec3 AfterTrack::blendedVelocity(uint64_t rid, Vec3 liveVel) const {
     auto it = velHistory.find(rid);
     if (it == velHistory.end() || it->second.empty()) return liveVel;
 
@@ -118,7 +127,7 @@ Vec3 ForwardTrack::blendedVelocity(uint64_t rid, Vec3 liveVel) const {
                   liveVel.z * 0.7f + trend.z * 0.3f };
 }
 
-bool ForwardTrack::samplePredictions() {
+bool AfterTrack::samplePredictions() {
     auto ci = SDK::ClientInstance::get();
     if (!ci || !ci->minecraft) return false;
     auto lp = ci->getLocalPlayer();
@@ -133,26 +142,22 @@ bool ForwardTrack::samplePredictions() {
     }
 
     auto now = std::chrono::steady_clock::now();
-    std::unordered_map<uint64_t, std::deque<VelRecord>> newHistory;
-    std::unordered_map<uint64_t, AABB> newPred;
-    std::unordered_map<uint64_t, bool> newValid;
+    std::unordered_set<uint64_t> seen;
 
     auto snap = EntityCache::get().snapshot();
+    seen.reserve(snap->views.size());
     for (auto* actor : snap->actors) {
         if (!actor || actor == lp || !actor->isPlayer()) continue;
         auto hp = actor->getHealth();
         if (!hp || *hp <= 0.f) continue;
 
         uint64_t rid = actor->getRuntimeID();
+        seen.insert(rid);
 
         Vec3 liveVel = actor->getPos() - actor->getPosOld();
-        auto& hist = newHistory[rid];
-        auto oldIt = velHistory.find(rid);
-        if (oldIt != velHistory.end()) hist = oldIt->second;
-        if (hist.empty() || now - hist.back().at >= std::chrono::milliseconds(20)) {
-            hist.push_back({ now, liveVel });
-            while (hist.size() > velHistoryLen) hist.pop_front();
-        }
+        auto& hist = velHistory[rid];
+        hist.push_back({ now, liveVel });
+        while (hist.size() > velHistoryLen) hist.pop_front();
 
         Vec3 baseVel = blendedVelocity(rid, liveVel);
 
@@ -179,18 +184,21 @@ bool ForwardTrack::samplePredictions() {
 
         auto res = MovementSim::predictForward(actor, seedVel, ticks, false);
         if (res.valid) {
-            newPred[rid] = res.finalBox;
-            newValid[rid] = true;
+            predictions[rid] = res.finalBox;
+            predValid[rid] = true;
+        } else {
+            predictions.erase(rid);
+            predValid.erase(rid);
         }
     }
 
-    velHistory = std::move(newHistory);
-    predictions = std::move(newPred);
-    predValid = std::move(newValid);
+    std::erase_if(velHistory, [&](auto const& entry) { return !seen.contains(entry.first); });
+    std::erase_if(predictions, [&](auto const& entry) { return !seen.contains(entry.first); });
+    std::erase_if(predValid, [&](auto const& entry) { return !seen.contains(entry.first); });
     return true;
 }
 
-bool ForwardTrack::getPredictedBox(uint64_t runtimeID, AABB& out) {
+bool AfterTrack::getPredictedBox(uint64_t runtimeID, AABB& out) {
     if (!isEnabled()) return false;
     auto it = predictions.find(runtimeID);
     if (it == predictions.end()) return false;
@@ -200,11 +208,14 @@ bool ForwardTrack::getPredictedBox(uint64_t runtimeID, AABB& out) {
     return true;
 }
 
-void ForwardTrack::onUpdate(Event&) {
+void AfterTrack::onUpdate(Event&) {
+    auto now = std::chrono::steady_clock::now();
+    if (now < nextPredictionAt) return;
+    nextPredictionAt = now + std::chrono::milliseconds(static_cast<int>(tickStepMs));
     samplePredictions();
 }
 
-void ForwardTrack::onAttack(Event& evG) {
+void AfterTrack::onAttack(Event& evG) {
     auto& ev = reinterpret_cast<AttackEvent&>(evG);
     auto* target = ev.getActor();
     if (!target) return;
@@ -217,7 +228,7 @@ void ForwardTrack::onAttack(Event& evG) {
     pendingAttackAt = std::chrono::steady_clock::now();
 }
 
-void ForwardTrack::onSendPacket(Event& evG) {
+void AfterTrack::onSendPacket(Event& evG) {
     auto& ev = reinterpret_cast<SendPacketEvent&>(evG);
     auto* packet = ev.getPacket();
     if (!packet) return;
@@ -249,7 +260,7 @@ void ForwardTrack::onSendPacket(Event& evG) {
     pendingAttackRID = 0;
 }
 
-bool ForwardTrack::isAttackPacket(SDK::Packet* packet, uint64_t& outTarget) const {
+bool AfterTrack::isAttackPacket(SDK::Packet* packet, uint64_t& outTarget) const {
     auto id = packet->getID();
     auto base = reinterpret_cast<uintptr_t>(packet);
 
@@ -270,7 +281,7 @@ bool ForwardTrack::isAttackPacket(SDK::Packet* packet, uint64_t& outTarget) cons
     return false;
 }
 
-void ForwardTrack::sendLatencyProbe(float offsetMs) {
+void AfterTrack::sendLatencyProbe(float offsetMs) {
     (void)offsetMs;
     if (!Signatures::MinecraftPackets_createPacket.result) return;
 
@@ -294,7 +305,7 @@ void ForwardTrack::sendLatencyProbe(float offsetMs) {
     probeInFlight = false;
 }
 
-void ForwardTrack::onRenderLevel(RenderLevelEvent&) {
+void AfterTrack::onRenderLevel(RenderLevelEvent&) {
     if (AntiObs::isActive()) return;
     if (!std::get<BoolValue>(hitbox)) return;
 
@@ -310,6 +321,9 @@ void ForwardTrack::onRenderLevel(RenderLevelEvent&) {
 
     auto baseCol = std::get<ColorValue>(hitboxColor).getMainColor();
     int style = hitboxStyle.getSelectedKey();
+    float thickness = std::get<FloatValue>(hitboxThickness).value / 10.f;
+    std::vector<MCDrawUtil3D::ColoredBox> fills;
+    std::vector<MCDrawUtil3D::ColoredThickBox> outlines;
 
     auto snap = EntityCache::get().snapshot();
     for (auto* actor : snap->actors) {
@@ -321,22 +335,10 @@ void ForwardTrack::onRenderLevel(RenderLevelEvent&) {
         if (!getPredictedBox(rid, box)) continue;
 
         d2d::Color col(baseCol);
-
-        if (style != style_outline) {
-            Vec3 lo = box.lower;
-            Vec3 hi = box.higher;
-            dc.fillQuad({ lo.x, lo.y, lo.z }, { hi.x, lo.y, lo.z }, { hi.x, lo.y, hi.z }, { lo.x, lo.y, hi.z }, col);
-            dc.fillQuad({ lo.x, hi.y, lo.z }, { hi.x, hi.y, lo.z }, { hi.x, hi.y, hi.z }, { lo.x, hi.y, hi.z }, col);
-            dc.fillQuad({ lo.x, lo.y, lo.z }, { hi.x, lo.y, lo.z }, { hi.x, hi.y, lo.z }, { lo.x, hi.y, lo.z }, col);
-            dc.fillQuad({ lo.x, lo.y, hi.z }, { hi.x, lo.y, hi.z }, { hi.x, hi.y, hi.z }, { lo.x, hi.y, hi.z }, col);
-            dc.fillQuad({ lo.x, lo.y, lo.z }, { lo.x, lo.y, hi.z }, { lo.x, hi.y, hi.z }, { lo.x, hi.y, lo.z }, col);
-            dc.fillQuad({ hi.x, lo.y, lo.z }, { hi.x, lo.y, hi.z }, { hi.x, hi.y, hi.z }, { hi.x, hi.y, lo.z }, col);
-        }
-        if (style != style_filled) {
-            d2d::Color lineCol = col;
-            lineCol.a = std::max(lineCol.a, 0.9f);
-            dc.drawBox(box, lineCol);
-        }
-        dc.flush();
+        if (style != style_outline) fills.push_back({ box, col });
+        if (style != style_filled) outlines.push_back({ box, thickness, col });
     }
+
+    dc.fillBoxes(fills);
+    dc.drawThickBoxes(outlines);
 }

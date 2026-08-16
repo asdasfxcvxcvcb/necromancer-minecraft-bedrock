@@ -4,5 +4,6 @@
 #include "Platform_GameCore.h"
 
 SDK::GameCore* SDK::GameCore::get() {
-    return SDK::Platform_GameCore::get()->getGameCore();
+    const auto platform = SDK::Platform_GameCore::get();
+    return platform ? platform->getGameCore() : nullptr;
 }

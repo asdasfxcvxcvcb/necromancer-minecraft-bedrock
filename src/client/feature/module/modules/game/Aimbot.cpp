@@ -2,6 +2,8 @@
 #include "Aimbot.h"
 #include "Backtrack.h"
 #include "Freelook.h"
+#include "client/event/events/ClickEvent.h"
+#include "client/event/events/AfterMoveEvent.h"
 #include "client/event/events/TurnDeltaEvent.h"
 #include "client/event/events/TickEvent.h"
 #include "client/misc/EntityCache.h"
@@ -10,8 +12,10 @@
 #include "client/misc/TargetManager.h"
 #include "client/misc/WallCheck.h"
 #include "client/screen/ScreenManager.h"
+#include "mc/Addresses.h"
 #include "mc/common/client/player/LocalPlayer.h"
 #include "mc/common/client/renderer/GameRenderer.h"
+#include "mc/common/world/actor/player/GameMode.h"
 #include "mc/common/world/actor/player/Player.h"
 #include "mc/common/world/level/BlockSource.h"
 #include "mc/common/world/level/Dimension.h"
@@ -164,6 +168,8 @@ Aimbot::Aimbot()
                LocalizeString::get("client.module.aimbot.ignoreFriends.desc"), ignoreFriends);
     addSetting("wallCheck", LocalizeString::get("client.module.aimbot.wallCheck.name"),
                LocalizeString::get("client.module.aimbot.wallCheck.desc"), wallCheck);
+    addSetting("hitBehindWall", LocalizeString::get("client.module.aimbot.hitBehindWall.name"),
+               LocalizeString::get("client.module.aimbot.hitBehindWall.desc"), hitBehindWall);
 
     addSetting("backtrackTarget", LocalizeString::get("client.module.aimbot.backtrackTarget.name"),
                LocalizeString::get("client.module.aimbot.backtrackTarget.desc"), backtrackTarget, "players"_istrue);
@@ -231,6 +237,8 @@ Aimbot::Aimbot()
     listen<UpdatePlayerCameraEvent>((EventListenerFunc)&Aimbot::onCameraUpdate, false, 1);
     listen<TurnDeltaEvent>((EventListenerFunc)&Aimbot::onTurnDelta);
     listen<CinematicCameraEvent>((EventListenerFunc)&Aimbot::onCinematicCamera, false, -100);
+    listen<ClickEvent>(&Aimbot::onClick, false, 10);
+    listen<AfterMoveEvent>(&Aimbot::onAfterMove, false, 10);
     Eventing::get().listen<RenderOverlayEvent, &Aimbot::onRenderOverlay>(this);
     listen<RendererCleanupEvent>(&Aimbot::onRendererCleanup, true);
 }
@@ -240,11 +248,24 @@ void Aimbot::afterLoadConfig() {
     if (selected < 0 || selected > SlotAuto) hitbox.setSelectedKey(SlotAuto);
 }
 
+Backtrack* Aimbot::resolveBacktrack() {
+    if (!backtrackResolved) {
+        auto mod = Necromancer::getModuleManager().find("Backtrack");
+        backtrackModule = mod ? static_cast<Backtrack*>(mod.get()) : nullptr;
+        backtrackResolved = true;
+    }
+    return backtrackModule;
+}
+
 void Aimbot::onDisable() {
     std::lock_guard controllerLock { controllerMutex };
     TargetManager::clearTarget(currentTargetId);
     currentTargetId = 0;
     currentTargetGhost = false;
+    currentTargetObstructed = false;
+    currentTargetBox = {};
+    currentTargetRecordAgeMs = -1.f;
+    pendingAttack = {};
     haveCurrentAimFrac = false;
     commandActive = false;
     injectingTurn.store(false, std::memory_order_release);
@@ -267,6 +288,10 @@ void Aimbot::onUpdate(Event&) {
         TargetManager::clearTarget(currentTargetId);
         currentTargetId = 0;
         currentTargetGhost = false;
+        currentTargetObstructed = false;
+        currentTargetBox = {};
+        currentTargetRecordAgeMs = -1.f;
+        pendingAttack = {};
         haveCurrentAimFrac = false;
         commandActive = false;
             lastFrame = {};
@@ -281,6 +306,10 @@ void Aimbot::onUpdate(Event&) {
         TargetManager::clearTarget(currentTargetId);
         currentTargetId = 0;
         currentTargetGhost = false;
+        currentTargetObstructed = false;
+        currentTargetBox = {};
+        currentTargetRecordAgeMs = -1.f;
+        pendingAttack = {};
         haveCurrentAimFrac = false;
         commandActive = false;
             lastFrame = {};
@@ -295,6 +324,8 @@ void Aimbot::onUpdate(Event&) {
     bool doPriority = std::get<BoolValue>(prioritizeTags);
     bool doIgnoreFriends = std::get<BoolValue>(ignoreFriends);
     bool doWallCheck = std::get<BoolValue>(wallCheck);
+    bool doHitBehindWall = std::get<BoolValue>(hitBehindWall);
+    bool enforceWallCheck = doWallCheck && !doHitBehindWall;
     bool doLockOn = std::get<BoolValue>(lockOn);
     float maxRange = std::get<FloatValue>(range).value;
     int targetModeKey = targetMode.getSelectedKey();
@@ -310,22 +341,14 @@ void Aimbot::onUpdate(Event&) {
     Vec3 eye = poseAwareEye(lp, lp->getPos());
     Vec3 forward = lookDir(commandActive ? commandedRot : lp->getRot());
 
-    SDK::BlockSource* region = doWallCheck ? ci->getRegion() : nullptr;
+    SDK::BlockSource* region = (doWallCheck || doHitBehindWall) ? ci->getRegion() : nullptr;
     if (region) WallCheck::beginPass();
 
     int probeSlot = hitboxMode == SlotAuto ? SlotBody : hitboxMode;
     candidates.clear();
 
     bool doGhost = std::get<BoolValue>(backtrackTarget) && doPlayers;
-    Backtrack* bt = nullptr;
-    if (doGhost) {
-        if (!backtrackResolved) {
-            auto mod = Necromancer::getModuleManager().find("Backtrack");
-            backtrackModule = mod ? static_cast<Backtrack*>(mod.get()) : nullptr;
-            backtrackResolved = true;
-        }
-        bt = backtrackModule;
-    }
+    Backtrack* bt = doGhost ? resolveBacktrack() : nullptr;
 
     auto snap = EntityCache::get().snapshot();
     for (auto const& view : snap->views) {
@@ -346,10 +369,10 @@ void Aimbot::onUpdate(Event&) {
             priority = PlayerListManager::get().getPriority(reinterpret_cast<SDK::Player*>(entt)->playerName);
         }
 
-        AABB ghostBox {};
-        bool haveGhost = bt && isPlayer && bt->getGhostBox(view.runtimeId, ghostBox);
+        std::vector<Backtrack::GhostRecord> ghostRecords;
+        bool haveGhostRecords = bt && isPlayer && bt->getGhostRecords(view.runtimeId, ghostRecords);
 
-        auto consider = [&](AABB const& bounds, bool isGhost) {
+        auto consider = [&](AABB const& bounds, bool isGhost, float recordAgeMs) {
             float distance = eye.distance(bounds.getCenter());
             if (distance > maxRange) return;
 
@@ -376,11 +399,13 @@ void Aimbot::onUpdate(Event&) {
                 score = health;
             }
 
-            candidates.push_back({ entt, score, priority, isRetained, isGhost, bounds, probeFrac });
+            candidates.push_back({ entt, score, priority, isRetained, isGhost, bounds, probeFrac, recordAgeMs });
         };
 
-        consider(entt->getBoundingBox(), false);
-        if (haveGhost) consider(ghostBox, true);
+        consider(entt->getBoundingBox(), false, -1.f);
+        if (haveGhostRecords) {
+            for (auto const& record : ghostRecords) consider(record.box, true, record.ageMs);
+        }
     }
 
     std::sort(candidates.begin(), candidates.end(), [](TargetCandidate const& a, TargetCandidate const& b) {
@@ -392,29 +417,33 @@ void Aimbot::onUpdate(Event&) {
     SDK::Actor* target = nullptr;
     Vec3 resolvedFrac = fracForSlot(probeSlot);
     bool targetIsGhost = false;
+    bool targetObstructed = false;
     AABB targetGhostBox {};
+    float targetRecordAgeMs = -1.f;
 
     for (auto const& candidate : candidates) {
         AABB const& bounds = candidate.bounds;
 
         if (hitboxMode == SlotAuto) {
             if (doLockOn && candidate.retained && haveCurrentAimFrac &&
-                (!region || WallCheck::isVisible(region, eye, boxPoint(bounds, candidate.frac)))) {
+                (!region || !enforceWallCheck || WallCheck::isVisible(region, eye, boxPoint(bounds, candidate.frac)))) {
                 resolvedFrac = candidate.frac;
             } else {
-                auto frac = resolveAutoFrac(bounds, eye, region);
+                auto frac = resolveAutoFrac(bounds, eye, enforceWallCheck ? region : nullptr);
                 if (!frac) continue;
                 resolvedFrac = *frac;
             }
         } else {
             Vec3 frac = fracForSlot(hitboxMode);
-            if (region && !WallCheck::isVisible(region, eye, boxPoint(bounds, frac))) continue;
+            if (region && enforceWallCheck && !WallCheck::isVisible(region, eye, boxPoint(bounds, frac))) continue;
             resolvedFrac = frac;
         }
 
         target = candidate.actor;
         targetIsGhost = candidate.isGhost;
+        targetObstructed = region && !WallCheck::isVisible(region, eye, boxPoint(bounds, resolvedFrac));
         targetGhostBox = candidate.bounds;
+        targetRecordAgeMs = candidate.recordAgeMs;
         break;
     }
 
@@ -422,6 +451,10 @@ void Aimbot::onUpdate(Event&) {
         TargetManager::clearTarget(currentTargetId);
         currentTargetId = 0;
         currentTargetGhost = false;
+        currentTargetObstructed = false;
+        currentTargetBox = {};
+        currentTargetRecordAgeMs = -1.f;
+        pendingAttack = {};
         haveCurrentAimFrac = false;
         commandActive = false;
             lastFrame = {};
@@ -444,6 +477,9 @@ void Aimbot::onUpdate(Event&) {
     TargetManager::setTarget(target);
     currentTargetId = targetId;
     currentTargetGhost = targetIsGhost;
+    currentTargetObstructed = targetObstructed;
+    currentTargetBox = targetGhostBox;
+    currentTargetRecordAgeMs = targetRecordAgeMs;
     currentAimFrac = resolvedFrac;
     haveCurrentAimFrac = true;
 }
@@ -505,17 +541,7 @@ void Aimbot::onCameraUpdate(Event&) {
 
     bool usingGhost = false;
     if (wantGhost) {
-        if (!backtrackResolved) {
-            auto mod = Necromancer::getModuleManager().find("Backtrack");
-            backtrackModule = mod ? static_cast<Backtrack*>(mod.get()) : nullptr;
-            backtrackResolved = true;
-        }
-        AABB ghost {};
-        if (backtrackModule && backtrackModule->getGhostBox(targetId, ghost)) {
-            bounds = ghost;
-        } else {
-            bounds = selectedGhost;
-        }
+        bounds = selectedGhost;
         usingGhost = true;
     }
 
@@ -654,6 +680,63 @@ void Aimbot::onCinematicCamera(Event& evGeneric) {
     std::lock_guard controllerLock { controllerMutex };
     if (!injectingTurn.load(std::memory_order_acquire)) return;
     reinterpret_cast<CinematicCameraEvent&>(evGeneric).setValue(false);
+}
+
+void Aimbot::onClick(Event& evGeneric) {
+    auto& ev = reinterpret_cast<ClickEvent&>(evGeneric);
+    if (ev.getClickType() != ClickEvent::ClickType::Left || !ev.isDown()) return;
+
+    std::lock_guard controllerLock { controllerMutex };
+    bool allowWallAttack = std::get<BoolValue>(hitBehindWall);
+    bool redirectGhost = currentTargetGhost;
+    bool redirectWall = allowWallAttack && currentTargetObstructed;
+    if (!currentTargetId || (!redirectGhost && !redirectWall) || pendingAttack.active) return;
+    if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) == 0) return;
+
+    auto ci = SDK::ClientInstance::get();
+    if (!ci || !ci->minecraftGame || !ci->minecraftGame->isCursorGrabbed() ||
+        Necromancer::get().getScreenManager().getActiveScreen())
+        return;
+
+    auto* target = EntityCache::get().findByRuntimeID(currentTargetId);
+    if (!target) return;
+
+    pendingAttack.runtimeID = currentTargetId;
+    pendingAttack.box = currentTargetBox;
+    pendingAttack.hitPoint = boxPoint(currentTargetBox, currentAimFrac);
+    pendingAttack.recordAgeMs = currentTargetRecordAgeMs;
+    pendingAttack.ghost = currentTargetGhost;
+    pendingAttack.active = true;
+    ev.setCancelled(true);
+}
+
+void Aimbot::onAfterMove(Event&) {
+    PendingAttack attack {};
+    {
+        std::lock_guard controllerLock { controllerMutex };
+        if (!pendingAttack.active) return;
+        attack = pendingAttack;
+        pendingAttack = {};
+    }
+
+    auto ci = SDK::ClientInstance::get();
+    auto* lp = ci ? ci->getLocalPlayer() : nullptr;
+    auto* target = EntityCache::get().findByRuntimeID(attack.runtimeID);
+    if (!lp || !lp->gameMode || !target) return;
+    if (auto hp = target->getHealth(); !hp || *hp <= 0.f) return;
+
+    if (attack.ghost) {
+        auto* bt = resolveBacktrack();
+        if (!bt || !bt->queueGhostAttack(attack.runtimeID, attack.box, attack.hitPoint, attack.recordAgeMs)) return;
+    } else {
+        if (!Signatures::GameMode_attack.result) return;
+        if (auto* bt = resolveBacktrack()) bt->allowDirectAttack(attack.runtimeID);
+        using GameModeAttackFn = __int64 (*)(void*, SDK::Actor*, char, Vec3*);
+        Vec3 clickPos = attack.hitPoint;
+        reinterpret_cast<GameModeAttackFn>(Signatures::GameMode_attack.result)(lp->gameMode, target, 0, &clickPos);
+    }
+
+    TargetManager::setTarget(target);
 }
 
 void Aimbot::onRenderOverlay(RenderOverlayEvent& ev) {

@@ -1,10 +1,12 @@
 #include "pch.h"
 #include "Triggerbot.h"
+#include "AfterTrack.h"
 #include "Backtrack.h"
 #include "client/misc/EntityCache.h"
 #include "client/misc/MaceUtil.h"
 #include "client/misc/TargetManager.h"
 #include "client/misc/PlayerListManager.h"
+#include "client/event/events/AfterMoveEvent.h"
 #include <client/screen/ScreenManager.h>
 #include <mc/common/client/game/ClientInstance.h>
 #include <mc/common/client/game/MinecraftGame.h>
@@ -158,6 +160,8 @@ Triggerbot::Triggerbot()
                LocalizeString::get("client.module.triggerbot.mobs.desc"), mobs);
     addSetting("ignoreFriends", LocalizeString::get("client.module.triggerbot.ignoreFriends.name"),
                LocalizeString::get("client.module.triggerbot.ignoreFriends.desc"), ignoreFriends);
+    addSetting("hitBehindWall", LocalizeString::get("client.module.triggerbot.hitBehindWall.name"),
+               LocalizeString::get("client.module.triggerbot.hitBehindWall.desc"), hitBehindWall);
 
     auto cpsSet = addSliderSetting("cps", LocalizeString::get("client.module.triggerbot.cps.name"),
                                    LocalizeString::get("client.module.triggerbot.cps.desc"), cps, FloatValue(1.f),
@@ -194,6 +198,7 @@ Triggerbot::Triggerbot()
                      }));
 
     this->listen<UpdateEvent>(&Triggerbot::onUpdate);
+    this->listen<AfterMoveEvent>(&Triggerbot::onAfterMove);
 }
 
 void Triggerbot::afterLoadConfig() {
@@ -206,6 +211,7 @@ void Triggerbot::onDisable() {
     wasOnGround = true;
     hasLastHit = false;
     lastHitTarget = 0;
+    pendingAttack = {};
 }
 
 Backtrack* Triggerbot::resolveBacktrack() {
@@ -217,70 +223,88 @@ Backtrack* Triggerbot::resolveBacktrack() {
     return backtrackModule;
 }
 
-bool Triggerbot::currentAimHeight(SDK::Actor* target, float& outY) {
+AfterTrack* Triggerbot::resolveAfterTrack() {
+    if (!afterTrackResolved) {
+        auto mod = Necromancer::getModuleManager().find("AfterTrack");
+        afterTrackModule = mod ? static_cast<AfterTrack*>(mod.get()) : nullptr;
+        afterTrackResolved = true;
+    }
+    return afterTrackModule;
+}
+
+bool Triggerbot::currentAimHeight(TargetSelection const& target, float& outY) {
     auto ci = SDK::ClientInstance::get();
-    if (!ci || !ci->minecraft || !target) return false;
+    if (!ci || !ci->minecraft || !target.actor) return false;
     auto level = ci->minecraft->getLevel();
     if (!level) return false;
     auto hit = level->getHitResult();
     if (!hit) return false;
 
     Vec3 toHit = hit->hitPos - hit->start;
-    Vec3 direction = toHit.magnitude() > 0.001f ? toHit.normalized() : hit->end.normalized();
+    Vec3 direction = target.obstructed ? hit->end.normalized()
+                                       : (toHit.magnitude() > 0.001f ? toHit.normalized() : hit->end.normalized());
     if (direction.magnitude() <= 0.0001f) return false;
 
-    AABB box = target->getBoundingBox();
-    if (std::get<BoolValue>(backtrackTarget)) {
-        AABB ghost {};
-        if (auto* bt = resolveBacktrack()) {
-            if (bt->getGhostBox(target->getRuntimeID(), ghost)) box = ghost;
-        }
-    }
-
-    float maxRange = std::get<FloatValue>(range).value;
-    auto dist = box.intersectsRay(hit->start, direction, maxRange, 0.f);
+    auto dist = target.box.intersectsRay(hit->start, direction, std::get<FloatValue>(range).value, 0.f);
     if (!dist) return false;
 
     outY = hit->start.y + direction.y * *dist;
     return true;
 }
 
-SDK::Actor* Triggerbot::pickTarget(float maxRange) {
+Triggerbot::TargetSelection Triggerbot::pickTarget(float maxRange) {
     auto ci = SDK::ClientInstance::get();
-    if (!ci || !ci->minecraft) return nullptr;
+    if (!ci || !ci->minecraft) return {};
 
     auto level = ci->minecraft->getLevel();
     auto lp = ci->getLocalPlayer();
-    if (!level || !lp) return nullptr;
+    if (!level || !lp) return {};
 
     auto hit = level->getHitResult();
-    if (!hit) return nullptr;
+    if (!hit) return {};
 
+    bool doHitBehindWall = std::get<BoolValue>(hitBehindWall);
     Vec3 toHit = hit->hitPos - hit->start;
-    Vec3 direction = toHit.magnitude() > 0.001f ? toHit.normalized() : hit->end.normalized();
-    if (direction.magnitude() <= 0.0001f) return nullptr;
+    Vec3 direction = doHitBehindWall ? hit->end.normalized()
+                                     : (toHit.magnitude() > 0.001f ? toHit.normalized() : hit->end.normalized());
+    if (direction.magnitude() <= 0.0001f) return {};
 
+    float wallDistance = std::numeric_limits<float>::infinity();
     float nearest = maxRange;
     if (hit->hitType == SDK::HitType::BLOCK) {
         float blockDist = hit->start.distance(hit->hitPos);
         if (blockDist > 0.001f) {
-            nearest = std::min(nearest, blockDist + 0.05f);
+            wallDistance = blockDist;
+            if (!doHitBehindWall) nearest = std::min(nearest, blockDist + 0.05f);
         }
     }
 
     bool doPlayers = std::get<BoolValue>(players);
     bool doMobs = std::get<BoolValue>(mobs);
     bool doIgnoreFriends = std::get<BoolValue>(ignoreFriends);
-    bool doGhost = std::get<BoolValue>(backtrackTarget);
-    Backtrack* bt = doGhost ? resolveBacktrack() : nullptr;
+    bool doLagRecords = std::get<BoolValue>(backtrackTarget);
+    Backtrack* bt = doLagRecords ? resolveBacktrack() : nullptr;
+    AfterTrack* at = doLagRecords ? resolveAfterTrack() : nullptr;
 
-    SDK::Actor* best = nullptr;
+    TargetSelection best;
+    auto consider = [&](SDK::Actor* actor, AABB const& box, TargetRecord record, float recordAgeMs, float pad) {
+        auto hitDist = box.intersectsRay(hit->start, direction, nearest, pad);
+        if (!hitDist || *hitDist >= nearest) return;
+        nearest = *hitDist;
+        best.actor = actor;
+        best.record = record;
+        best.box = box;
+        best.hitPoint = Vec3 { hit->start.x + direction.x * *hitDist, hit->start.y + direction.y * *hitDist,
+                              hit->start.z + direction.z * *hitDist };
+        best.recordAgeMs = recordAgeMs;
+        best.obstructed = std::isfinite(wallDistance) && *hitDist > wallDistance + 0.05f;
+    };
+
     auto snap = EntityCache::get().snapshot();
     for (auto const& view : snap->views) {
         SDK::Actor* entt = view.actor;
         if (!entt || entt == lp || !entt->aabbShape) continue;
-        if (view.isItem) continue;
-        if (!view.hasHealth || view.health <= 0.f) continue;
+        if (view.isItem || !view.hasHealth || view.health <= 0.f) continue;
         bool isPlayer = view.isPlayer;
         if (isPlayer ? !doPlayers : !doMobs) continue;
         if (view.invisible) continue;
@@ -288,26 +312,89 @@ SDK::Actor* Triggerbot::pickTarget(float maxRange) {
             PlayerListManager::get().isFriend(reinterpret_cast<SDK::Player*>(entt)->playerName))
             continue;
 
-        // Test the lag record for players when asked, so the trigger fires on the box
-        // the server will validate rather than the live model.
-        AABB box = entt->getBoundingBox();
-        float pad = 0.08f;
-        if (bt && isPlayer) {
-            AABB ghost {};
-            if (!bt->getGhostBox(entt->getRuntimeID(), ghost)) continue;
-            box = ghost;
-            // No padding on a ghost: inflating it hands out reach the record never had.
-            pad = 0.f;
+        AABB liveBox = entt->getBoundingBox();
+        auto liveDist = liveBox.intersectsRay(hit->start, direction, nearest, 0.08f);
+        if (liveDist && *liveDist < nearest) {
+            consider(entt, liveBox, TargetRecord::Live, -1.f, 0.08f);
         }
 
-        auto hitDist = box.intersectsRay(hit->start, direction, nearest, pad);
-        if (!hitDist) continue;
-        if (*hitDist < nearest) {
-            nearest = *hitDist;
-            best = entt;
+        if (!isPlayer || !doLagRecords) continue;
+
+        float actorNearest = liveDist ? *liveDist : nearest;
+        TargetRecord actorRecord = liveDist ? TargetRecord::Live : TargetRecord::Backtrack;
+        AABB actorBox = liveBox;
+        float actorRecordAge = -1.f;
+        bool actorHit = liveDist.has_value();
+
+        auto considerRecord = [&](AABB const& box, TargetRecord record, float recordAgeMs) {
+            auto recordDist = box.intersectsRay(hit->start, direction, actorNearest, 0.f);
+            if (!recordDist || *recordDist >= actorNearest) return;
+            actorNearest = *recordDist;
+            actorRecord = record;
+            actorBox = box;
+            actorRecordAge = recordAgeMs;
+            actorHit = true;
+        };
+
+        std::vector<Backtrack::GhostRecord> backtrackRecords;
+        if (bt && bt->getGhostRecords(view.runtimeId, backtrackRecords)) {
+            for (auto const& record : backtrackRecords) {
+                considerRecord(record.box, TargetRecord::Backtrack, record.ageMs);
+            }
+        }
+
+        AABB recordBox {};
+        if (at && at->getPredictedBox(view.runtimeId, recordBox)) {
+            considerRecord(recordBox, TargetRecord::AfterTrack, -1.f);
+        }
+
+        if (actorHit && actorRecord != TargetRecord::Live && actorNearest < nearest) {
+            consider(entt, actorBox, actorRecord, actorRecordAge, 0.f);
         }
     }
     return best;
+}
+
+bool Triggerbot::performDirectAttack(SDK::LocalPlayer* lp, TargetSelection const& target) {
+    if (!lp || !target.actor) return false;
+    pendingAttack.runtimeID = target.actor->getRuntimeID();
+    pendingAttack.record = target.record;
+    pendingAttack.box = target.box;
+    pendingAttack.hitPoint = target.hitPoint;
+    pendingAttack.recordAgeMs = target.recordAgeMs;
+    pendingAttack.obstructed = target.obstructed;
+    pendingAttack.fireAt = std::chrono::steady_clock::now();
+    pendingAttack.active = true;
+    return true;
+}
+
+void Triggerbot::onAfterMove(Event&) {
+    if (!pendingAttack.active) return;
+    if (std::chrono::steady_clock::now() < pendingAttack.fireAt) return;
+
+    PendingAttack attack = pendingAttack;
+    pendingAttack = {};
+
+    auto ci = SDK::ClientInstance::get();
+    auto lp = ci ? ci->getLocalPlayer() : nullptr;
+    auto* target = EntityCache::get().findByRuntimeID(attack.runtimeID);
+    if (!lp || !lp->gameMode || !target) return;
+
+    if (auto hp = target->getHealth(); !hp || *hp <= 0.f) return;
+
+    if (attack.record == TargetRecord::Backtrack) {
+        auto* bt = resolveBacktrack();
+        if (!bt || !bt->queueGhostAttack(attack.runtimeID, attack.box, attack.hitPoint, attack.recordAgeMs)) return;
+        TargetManager::setTarget(target);
+        return;
+    }
+
+    if (!Signatures::GameMode_attack.result) return;
+    if (auto* bt = resolveBacktrack()) bt->allowDirectAttack(attack.runtimeID);
+    using GameModeAttackFn = __int64 (*)(void*, SDK::Actor*, char, Vec3*);
+    Vec3 clickPos = attack.hitPoint;
+    reinterpret_cast<GameModeAttackFn>(Signatures::GameMode_attack.result)(lp->gameMode, target, 0, &clickPos);
+    TargetManager::setTarget(target);
 }
 
 float estimateNormalDamage(SDK::Player* lp, SDK::Actor* target) {
@@ -367,6 +454,12 @@ bool Triggerbot::canFire(SDK::Actor* target) {
 }
 
 void Triggerbot::onUpdate(Event&) {
+    if (!std::get<BoolValue>(noRepeatPoint)) {
+        hasLastHit = false;
+        lastHitTarget = 0;
+        lastHitY = 0.f;
+    }
+
     auto ci = SDK::ClientInstance::get();
     if (!ci || !ci->minecraft || !ci->minecraftGame) return;
     if (!ci->minecraftGame->isCursorGrabbed()) return;
@@ -384,8 +477,8 @@ void Triggerbot::onUpdate(Event&) {
     if (wasOnGround && !onGround) lastJumpTime = now;
     wasOnGround = onGround;
 
-    auto* target = pickTarget(std::get<FloatValue>(range).value);
-    if (!target || !canFire(target)) {
+    auto target = pickTarget(std::get<FloatValue>(range).value);
+    if (!target.actor || !canFire(target.actor)) {
         nextAttack = now;
         return;
     }
@@ -401,27 +494,25 @@ void Triggerbot::onUpdate(Event&) {
     // mobs and any player with no lag record yet.
     float aimY = 0.f;
     bool haveAimY = false;
-    bool gateOnHeight = false;
-    if (std::get<BoolValue>(backtrackTarget) && std::get<BoolValue>(noRepeatPoint)) {
-        AABB ghost {};
-        auto* bt = resolveBacktrack();
-        gateOnHeight = bt && target->isPlayer() && bt->getGhostBox(target->getRuntimeID(), ghost);
-    }
+    bool gateOnHeight = target.record != TargetRecord::Live && std::get<BoolValue>(noRepeatPoint);
     if (gateOnHeight) {
         haveAimY = currentAimHeight(target, aimY);
         if (!haveAimY) {
             nextAttack = now;
             return;
         }
-        uint64_t rid = target->getRuntimeID();
+        uint64_t rid = target.actor->getRuntimeID();
         if (hasLastHit && lastHitTarget == rid) {
             float gap = std::clamp(std::get<FloatValue>(pointGap).value, 0.05f, 1.f);
             if (std::abs(aimY - lastHitY) < gap) return;
         }
     }
 
-    auto mouse = SDK::MouseDevice::get();
-    if (!mouse) {
+    bool useMouse = target.record == TargetRecord::Backtrack ||
+                    (target.record == TargetRecord::Live && !target.obstructed);
+    bool supplementDirect = target.record == TargetRecord::Live && target.obstructed;
+    auto mouse = (useMouse || supplementDirect) ? SDK::MouseDevice::get() : nullptr;
+    if ((useMouse || supplementDirect) && !mouse) {
         nextAttack = now;
         return;
     }
@@ -439,21 +530,43 @@ void Triggerbot::onUpdate(Event&) {
         mouse->inputs.push_back(action);
     };
 
-    int attacks = 0;
-    while (now >= nextAttack && attacks < 64) {
+    if (now < nextAttack || pendingAttack.active) return;
+
+    if (useMouse) {
+        if (target.record == TargetRecord::Backtrack) {
+            auto* bt = resolveBacktrack();
+            if (!bt || !bt->prepareGhostAttack(target.actor->getRuntimeID(), target.box, target.hitPoint,
+                                               target.recordAgeMs)) {
+                nextAttack = now;
+                return;
+            }
+        } else {
+            if (auto* bt = resolveBacktrack()) bt->allowDirectAttack(target.actor->getRuntimeID());
+        }
         pushClick(true);
         pushClick(false);
-        TargetManager::setTarget(target);
-        if (gateOnHeight && haveAimY) {
-            lastHitTarget = target->getRuntimeID();
-            lastHitY = aimY;
-            hasLastHit = true;
+        TargetManager::setTarget(target.actor);
+    } else if (supplementDirect) {
+        if (auto* bt = resolveBacktrack()) bt->allowDirectAttack(target.actor->getRuntimeID());
+        pushClick(true);
+        pushClick(false);
+        if (!performDirectAttack(lp, target)) {
+            nextAttack = now;
+            return;
         }
-
-        float cpsVal = std::max(std::get<FloatValue>(cps).value, 1.f);
-        nextAttack += std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-            std::chrono::duration<float>(1.f / cpsVal));
-        ++attacks;
+        pendingAttack.fireAt = now + std::chrono::milliseconds(60);
+    } else if (!performDirectAttack(lp, target)) {
+        nextAttack = now;
+        return;
     }
-    if (attacks >= 64) nextAttack = now;
+
+    if (gateOnHeight && haveAimY) {
+        lastHitTarget = target.actor->getRuntimeID();
+        lastHitY = aimY;
+        hasLastHit = true;
+    }
+
+    float cpsVal = std::max(std::get<FloatValue>(cps).value, 1.f);
+    nextAttack = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                           std::chrono::duration<float>(1.f / cpsVal));
 }

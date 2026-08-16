@@ -237,7 +237,7 @@ bool AntiBot::isBot(SDK::Actor* entt) {
     uint64_t runtimeId = entt->getRuntimeID();
     if (entt == current->localActor || (runtimeId != 0 && runtimeId == current->localRuntimeId)) return false;
 
-    bool balanced = std::get<EnumValue>(mod->mode).val == static_cast<int>(Mode::Balanced);
+    bool balanced = mod->modeData.getSelectedKey() == static_cast<int>(Mode::Balanced);
     bool doPlayerList = balanced || settingEnabled(mod->playerListCheck);
     bool doDuplicates = balanced || settingEnabled(mod->duplicateNameCheck);
     bool doHitbox = balanced || settingEnabled(mod->hitboxCheck);

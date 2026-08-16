@@ -7,8 +7,10 @@ SDK::ItemStack* SDK::ItemStack::constructFromBlock(void* storage, SDK::Block con
     auto fn = reinterpret_cast<oFunc_t>(Signatures::ItemStack_ItemStackBlock.result);
 
     if (!fn) return nullptr;
+    if (!Signatures::ItemStackVtable.result) return nullptr;
 
     const auto item = fn(storage, &block, count, userData);
+    if (!item) return nullptr;
 
     item->vtable = reinterpret_cast<void**>(Signatures::ItemStackVtable.result);
 

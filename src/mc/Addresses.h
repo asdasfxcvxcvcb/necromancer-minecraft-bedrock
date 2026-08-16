@@ -37,16 +37,207 @@ public:
     };
 
     struct Vtable {
-        // "Client{} camera ticking systems"
-        // Right below is a func allocating memory followed by a nullptr check and a memset with 0x800-ish bytes
-        // The function called after the memset with the ptr that's been cleared is the MultiLevelPlayer ctor
-        // 1st of 3 data LEA's
+        inline static SigImpl Actor {
+            [](memory::signature_store& store, uintptr_t) {
+                return store.deref(0x2A);
+            },
+            "55 56 57 53 48 83 EC 48 48 8D 6C 24 40 0F 29 75 F0 48 C7 45 E8 ? ? ? ? 4C 89 C6 48 89 D7 48 89 CB E8 ? ? ? ? 48 8D 05 ? ? ? ? 48 89 03 C7 83 B0 03 00 00"_sig,
+            "const Actor::`vftable'"
+        };
+
+        inline static SigImpl Mob {
+            [](memory::signature_store& store, uintptr_t) {
+                return store.deref(3);
+            },
+            "48 8D 05 ? ? ? ? 48 89 07 66 0F EF C0 F3 0F 7F 87 68 04 00 00 48 89 BD ? ? ? ? 48 C7 87 78 04 00 00 ? ? ? ?"_sig,
+            "const Mob::`vftable'"
+        };
+
+        inline static SigImpl Player {
+            [](memory::signature_store& store, uintptr_t) {
+                return store.deref(3);
+            },
+            "48 8D 0D ? ? ? ? 49 89 0C 24 41 89 84 24 B8 0C 00 00 49 8D 84 24 C0 0C 00 00"_sig,
+            "const Player::`vftable'"
+        };
+
+        inline static SigImpl LocalPlayer {
+            [](memory::signature_store& store, uintptr_t) {
+                return store.deref(3);
+            },
+            "48 8D 05 ? ? ? ? 48 89 07 48 8D 87 08 0F 00 00 48 89 85 ? ? ? ? C6 87 30 0F 00 00 00 C6 87 39 0F 00 00 00"_sig,
+            "const LocalPlayer::`vftable'"
+        };
+
+        inline static SigImpl ClientInstance {
+            [](memory::signature_store& store, uintptr_t) {
+                return store.deref(3);
+            },
+            "48 8D 05 ? ? ? ? 49 89 45 00 48 8D 05 ? ? ? ? 49 89 45 18 48 8D 05 ? ? ? ? 49 89 85 ? ? ? ? 48 8D 05 ? ? ? ? 49 89 85 ? ? ? ?"_sig,
+            "const ClientInstance::`vftable'"
+        };
+
+        inline static SigImpl Options {
+            [](memory::signature_store& store, uintptr_t) {
+                return store.deref(3);
+            },
+            "48 8D 05 ? ? ? ? 49 89 06 48 8D 05 ? ? ? ? 49 89 46 08 41 0F 11 86 00 1A 00 00"_sig,
+            "const Options::`vftable'"
+        };
+
         inline static SigImpl Level {
             [](memory::signature_store& store, uintptr_t) {
                 return store.deref(3);
             },
-            "48 8D 05 ? ? ? ? 48 89 07 48 8D 05 ? ? ? ? 48 89 47 ? 48 8D 05 ? ? ? ? 48 89 BD"_sig,
+            "48 8D 05 ? ? ? ? 48 89 07 48 8D 05 ? ? ? ? 48 89 47 18 48 8D 05 ? ? ? ? 48 89 BD ? ? ? ? 48 89 47 20"_sig,
             "const Level::`vftable'"
+        };
+
+        inline static SigImpl RakPeer {
+            [](memory::signature_store& store, uintptr_t) {
+                return store.deref(3);
+            },
+            "48 8D 05 ? ? ? ? 48 89 01 48 8D 05 ? ? ? ? 48 89 41 08 48 B8 00 00 00 00 ? ? ? ? 48 89 41 20 C7 41 28"_sig,
+            "const RakPeer::`vftable'"
+        };
+    };
+
+    struct VtableIndex {
+        struct Actor {
+            inline static constexpr size_t isInvisible = 0x1F;
+            inline static constexpr size_t getActorRendererId = 0x45;
+            inline static constexpr size_t getActorRendererIdOverride = 0x52;
+            inline static constexpr size_t getCommandPermissionLevel = 0x66;
+            inline static constexpr size_t swing = 0x6E;
+        };
+
+        struct Mob {
+            inline static constexpr size_t setSprinting = 0x8B;
+            inline static constexpr size_t getItemUseDuration = 0x94;
+        };
+
+        struct Player {
+            inline static constexpr size_t displayClientMessage = 0xC6;
+            inline static constexpr size_t getXUID = 0xE7;
+        };
+
+        struct ClientInstance {
+            inline static constexpr size_t getRegion = 0x1E;
+            inline static constexpr size_t getLocalPlayer = 0x1F;
+            inline static constexpr size_t getResourcePackManager = 0x60;
+        };
+
+        struct Options {
+            inline static constexpr size_t setPlayerViewPerspective = 0x76;
+            inline static constexpr size_t getPlayerViewPerspective = 0x77;
+        };
+
+        struct Level {
+            inline static constexpr size_t playSoundEvent = 0xBB;
+            inline static constexpr size_t isClientSide = 0x13E;
+            inline static constexpr size_t getRuntimeActorList = 0x145;
+            inline static constexpr size_t getHitResult = 0x14F;
+            inline static constexpr size_t getLiquidHitResult = 0x150;
+        };
+
+        struct BlockSource {
+            inline static constexpr size_t isSolidBlockingBlock = 0x35;
+        };
+
+        struct Item {
+            inline static constexpr size_t getMaxUseDuration = 0x5;
+            inline static constexpr size_t canDestroySpecial = 0x21;
+            inline static constexpr size_t getMaxDamage = 0x24;
+            inline static constexpr size_t isGlint = 0x28;
+            inline static constexpr size_t getDestroySpeed = 0x58;
+        };
+
+        struct Font {
+            inline static constexpr size_t getLineLength = 0x6;
+            inline static constexpr size_t getLineHeight = 0x7;
+        };
+
+        struct I18n {
+            inline static constexpr size_t get = 0x10;
+        };
+
+        struct DataItem {
+            inline static constexpr size_t getId = 0x1;
+            inline static constexpr size_t getType = 0x2;
+        };
+
+        struct MinecraftUIRenderContext {
+            inline static constexpr size_t flushText = 0x6;
+            inline static constexpr size_t drawImage = 0x7;
+            inline static constexpr size_t drawNineslice = 0x8;
+        };
+
+        struct RenderMaterialGroup {
+            inline static constexpr size_t createMaterial = 0x1;
+        };
+
+        struct ResourcePackManager {
+            inline static constexpr size_t load = 0x1;
+        };
+
+        struct RemoteConnector {
+            inline static constexpr size_t getConnectedGameInfo = 0x3;
+        };
+
+        struct RakPeer {
+            inline static constexpr size_t ping = 0x24;
+            inline static constexpr size_t getAveragePing = 0x27;
+        };
+
+        struct ContainerScreenController {
+            inline static constexpr size_t tryExit = 0xC;
+            inline static constexpr size_t canUse = 0x27;
+            inline static constexpr size_t handleAutoPlace = 0x35;
+            inline static constexpr size_t getSelectedSlotInfo = 0x39;
+            inline static constexpr size_t handleTakePlace = 0x3B;
+        };
+
+        struct ContainerManagerModel {
+            inline static constexpr size_t autoPlace = 0xF;
+        };
+    };
+
+    struct FieldOffset {
+        struct NetworkSystem {
+            inline static constexpr size_t remoteConnector = 0xF8;
+        };
+
+        struct RemoteConnectorComposite {
+            inline static constexpr size_t ownerControlBlock = 0x50;
+            inline static constexpr size_t networkSessionOwner = 0x60;
+            inline static constexpr size_t netherNetConnector = 0x68;
+            inline static constexpr size_t rakNetConnector = 0x70;
+        };
+
+        struct NetworkSessionOwner {
+            inline static constexpr size_t sessionInfo = 0x18;
+        };
+
+        struct NetworkSessionInfo {
+            inline static constexpr size_t connectorType = 0x18;
+            inline static constexpr int netherNetConnectorType = 2;
+        };
+
+        struct ThirdPartyInfo {
+            inline static constexpr size_t creatorId = 0x40;
+            inline static constexpr size_t creatorName = 0x60;
+            inline static constexpr size_t storagePageId = 0x80;
+            inline static constexpr size_t requireXboxLive = 0xA0;
+            inline static constexpr size_t experienceId = 0xA8;
+        };
+
+        struct GameConnectionInfo {
+            inline static constexpr size_t hostIpAddress = 0x8;
+            inline static constexpr size_t unresolvedUrl = 0x28;
+            inline static constexpr size_t serverRegion = 0x48;
+            inline static constexpr size_t serviceQuality = 0x88;
+            inline static constexpr size_t port = 0x8C;
+            inline static constexpr size_t thirdPartyServerInfo = 0xD0;
         };
     };
 
@@ -78,6 +269,14 @@ public:
         },
         "48 83 EC 38 48 8B 05 ? ? ? ? 48 31 E0 48 89 44 24 ? 48 8B 01 48 8B 40 08 48 8D 54 24 ? 41 B8 03 00 00 00"_sig,
         "Options::getPerspective"
+    };
+
+    inline static SigImpl Options_setPerspective {
+        [](memory::signature_store&, uintptr_t res) {
+            return res;
+        },
+        "56 57 48 83 EC 58 89 D6 48 89 CF 48 8B 81"_sig,
+        "Options::setPerspective"
     };
 
     inline static SigImpl Options_getHideHand {
@@ -123,7 +322,7 @@ public:
         [](memory::signature_store&, uintptr_t res) {
             return res;
         },
-        "55 41 57 41 56 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 ? ? ? ? 48 C7 45 ? ? ? ? ? 48 89 CF 48 8D B1 ? ? ? ? 48 8B 81"_sig,
+        "55 41 57 41 56 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 ? ? ? ? 48 C7 45 ? ? ? ? ? 48 89 CF 48 8D 71"_sig,
         "MinecraftGame::onDeviceLost"
     };
 
@@ -217,7 +416,7 @@ public:
     inline static SigImpl ItemStackVtable { [](memory::signature_store& store, uintptr_t) {
                                                return store.deref(3);
                                            },
-                                            "48 8D 1D ? ? ? ? 48 89 5D ? 48 89 F9"_sig, "ItemStackVtable" };
+                                            "48 8D 1D ? ? ? ? 48 89 5D ? 48 8D 4D ? 48 89 F2"_sig, "ItemStackVtable" };
 
     inline static SigImpl ItemStackBase_destructor {
         [](memory::signature_store&, uintptr_t res) {
@@ -231,7 +430,7 @@ public:
         [](memory::signature_store&, uintptr_t res) {
             return res;
         },
-        "41 57 41 56 41 55 41 54 56 57 55 53 48 81 EC ? ? ? ? 44 0F 29 8C 24 ? ? ? ? 44 0F 29 44 24 ? 0F 29 7C 24 ? 0F 29 74 24 ? 8B 81"_sig,
+        "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 ? ? ? ? 44 0F 29 4D ? 44 0F 29 45 ? 0F 29 7D ? 0F 29 75 ? 48 C7 45 ? ? ? ? ? 0F 28 F3 0F 28 FA 44 0F 28 C1 48 89 CE 48 8B 0D"_sig,
         "Tessellator::vertex"
     };
 
@@ -392,7 +591,7 @@ public:
         [](memory::signature_store&, uintptr_t res) {
             return res;
         },
-        "55 41 57 41 56 41 54 56 57 53 48 83 EC ? 48 8D 6C 24 ? 48 C7 45 ? ? ? ? ? 48 89 D6 48 89 CB 48 8B 79 ? 48 85 FF"_sig,
+        "55 41 57 41 56 41 54 56 57 53 48 83 EC ? 48 8D 6C 24 ? 48 C7 45 ? ? ? ? ? 48 89 D6 48 89 CF 48 8B 41 ? 48 85 C0"_sig,
         "ItemStackNetManagerClient::_endRequest"
     };
 
@@ -408,7 +607,7 @@ public:
         [](memory::signature_store&, uintptr_t res) {
             return res;
         },
-        "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 ? ? ? ? 48 C7 45 ? ? ? ? ? 88 55 ? 48 83 79"_sig,
+        "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC E8 00 00 00 48 8D AC 24 ? ? ? ? 48 C7 45 ? ? ? ? ? 88 55 ? 48 83 B9 D8 00 00 00 00"_sig,
         "ContainerScreenController::coalesceOrAutoPlaceItems"
     };
 
@@ -416,7 +615,7 @@ public:
         [](memory::signature_store&, uintptr_t res) {
             return res;
         },
-        "55 41 57 41 56 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 ? ? ? ? 48 C7 45 ? ? ? ? ? 48 83 79 ? ? 0F 84 ? ? ? ? 48 89 CE 48 8B 49"_sig,
+        "55 41 57 41 56 56 57 53 48 81 EC A8 00 00 00 48 8D AC 24 ? ? ? ? 48 C7 45 ? ? ? ? ? 48 83 B9 D8 00 00 00 00"_sig,
         "ContainerScreenController::autoPlaceItems"
     };
 
@@ -486,7 +685,7 @@ public:
         [](memory::signature_store&, uintptr_t res) {
             return res;
         },
-        "55 41 57 41 56 41 55 41 54 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 ? ? ? ? 48 C7 85 ? ? ? ? ? ? ? ? 4C 89 CB 45 89 C6 49 89 D7 48 89 CF 48 8B 41"_sig,
+        "55 41 57 41 56 41 54 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 ? ? ? ? 48 C7 85 ? ? ? ? ? ? ? ? 4C 89 CB 45 89 C6 49 89 D7 48 89 CF 48 8B 41 ? 48 8B 88 ? ? ? ? 48 85 C9"_sig,
         "GameMode::attack"
     };
 
@@ -498,17 +697,27 @@ public:
         "GameMode::buildBlock"
     };
 
-    inline static SigImpl GuiData__addMessage { [](memory::signature_store& store, uintptr_t) {
-                                                   return store.deref(1);
-                                               },
-                                                "E8 ? ? ? ? 4C 8B B6 ? ? ? ? 48 8B BE ? ? ? ? 48 89 F8"_sig,
-                                                "GuiData::_addMessage(MessageContext*, UIProfanityContext)" };
+    inline static SigImpl GuiMessageVector_emplaceBack {
+        [](memory::signature_store&, uintptr_t res) {
+            return res;
+        },
+        "49 89 D0 48 8B 51 ? 48 3B 51 ? 0F 84 ? ? ? ? 41 8B 00"_sig,
+        "std::vector<GuiMessage>::emplace_back"
+    };
+
+    inline static SigImpl Actor_getNameTag {
+        [](memory::signature_store&, uintptr_t res) {
+            return res;
+        },
+        "56 48 83 EC ? 48 8B 81 ? ? ? ? 48 85 C0 74 ? 8B 50 ? 48 8B 08 29 CA 81 E2 ? ? ? ? 48 8D 05"_sig,
+        "Actor::getNameTag"
+    };
 
     inline static SigImpl Actor_setNameTag {
         [](memory::signature_store&, uintptr_t res) {
             return res;
         },
-        "55 56 57 53 48 83 EC ? 48 8D 6C 24 ? 48 C7 45 ? ? ? ? ? 48 89 D7 48 89 CE 48 81 C1 ? ? ? ? 48 8D 55"_sig,
+        "56 57 48 83 EC ? 48 89 CE 48 8B 89 ? ? ? ? 48 85 C9 0F 84 ? ? ? ? 48 89 D7"_sig,
         "Actor::setNameTag"
     };
 

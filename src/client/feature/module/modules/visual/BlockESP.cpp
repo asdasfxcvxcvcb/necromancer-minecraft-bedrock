@@ -401,7 +401,7 @@ void BlockESP::onRenderLevel(RenderLevelEvent& event) {
     // Time budget instead of a fixed column count: a fixed budget costs the same
     // work no matter how long the frame already took, which drags frame time down
     // further exactly when the game is already struggling.
-    constexpr auto scanBudget = std::chrono::microseconds(1500);
+    constexpr auto scanBudget = std::chrono::microseconds(500);
     constexpr int budgetCheckInterval = 16;
     constexpr size_t pendingCap = 20000;
     constexpr size_t blockLookupCap = 8192;
@@ -411,6 +411,7 @@ void BlockESP::onRenderLevel(RenderLevelEvent& event) {
     if (!scanActive && now - lastSweep >= delayMs) {
         scanActive = true;
         scanCursor = 0;
+        scanY = minY;
         scanCenter = BlockPos { static_cast<int>(std::floor(p.x)), static_cast<int>(std::floor(p.y)),
                                 static_cast<int>(std::floor(p.z)) };
         pending.clear();
@@ -419,48 +420,57 @@ void BlockESP::onRenderLevel(RenderLevelEvent& event) {
     if (scanActive) {
         auto scanStart = std::chrono::steady_clock::now();
         int sinceCheck = 0;
-        while (scanCursor < totalColumns && pending.size() < pendingCap) {
-            if (++sinceCheck >= budgetCheckInterval) {
-                sinceCheck = 0;
-                if (std::chrono::steady_clock::now() - scanStart >= scanBudget) break;
-            }
-
+        bool budgetExpired = false;
+        while (scanCursor < totalColumns && pending.size() < pendingCap && !budgetExpired) {
             int dx = scanCursor % scanWidth - scanRadius;
             int dz = scanCursor / scanWidth - scanRadius;
-            scanCursor++;
             int x = scanCenter.x + dx;
             int z = scanCenter.z + dz;
 
-            for (int y = minY; y <= maxY; y++) {
+            while (scanY <= maxY && pending.size() < pendingCap) {
+                int y = scanY++;
                 auto block = region->getBlock(BlockPos { x, y, z });
-                if (!block) continue;
-
-                int idx;
-                auto it = blockLookup.find(block);
-                if (it == blockLookup.end()) {
-                    idx = -1;
-                    auto legacy = block->legacyBlock;
-                    if (legacy) {
-                        std::string id = legacy->namespacedId.getString();
-                        for (size_t i = 0; i < entries.size(); i++) {
-                            if (entries[i]->id == id) {
-                                idx = static_cast<int>(i);
-                                break;
+                if (block) {
+                    int idx;
+                    auto it = blockLookup.find(block);
+                    if (it == blockLookup.end()) {
+                        idx = -1;
+                        auto legacy = block->legacyBlock;
+                        if (legacy) {
+                            std::string id = legacy->namespacedId.getString();
+                            for (size_t i = 0; i < entries.size(); i++) {
+                                if (entries[i]->id == id) {
+                                    idx = static_cast<int>(i);
+                                    break;
+                                }
                             }
                         }
+                        if (blockLookup.size() >= blockLookupCap) blockLookup.clear();
+                        blockLookup.emplace(block, idx);
+                    } else {
+                        idx = it->second;
                     }
-                    if (blockLookup.size() >= blockLookupCap) blockLookup.clear();
-                    blockLookup.emplace(block, idx);
-                } else {
-                    idx = it->second;
+
+                    if (idx >= 0 && pending.size() < pendingCap) {
+                        float fdx = static_cast<float>(x) + 0.5f - static_cast<float>(scanCenter.x);
+                        float fdy = static_cast<float>(y) + 0.5f - static_cast<float>(scanCenter.y);
+                        float fdz = static_cast<float>(z) + 0.5f - static_cast<float>(scanCenter.z);
+                        pending.push_back({ BlockPos { x, y, z }, idx, fdx * fdx + fdy * fdy + fdz * fdz });
+                    }
                 }
 
-                if (idx >= 0 && pending.size() < pendingCap) {
-                    float fdx = static_cast<float>(x) + 0.5f - static_cast<float>(scanCenter.x);
-                    float fdy = static_cast<float>(y) + 0.5f - static_cast<float>(scanCenter.y);
-                    float fdz = static_cast<float>(z) + 0.5f - static_cast<float>(scanCenter.z);
-                    pending.push_back({ BlockPos { x, y, z }, idx, fdx * fdx + fdy * fdy + fdz * fdz });
+                if (++sinceCheck >= budgetCheckInterval) {
+                    sinceCheck = 0;
+                    if (std::chrono::steady_clock::now() - scanStart >= scanBudget) {
+                        budgetExpired = true;
+                        break;
+                    }
                 }
+            }
+
+            if (scanY > maxY) {
+                scanY = minY;
+                scanCursor++;
             }
         }
 
@@ -480,6 +490,10 @@ void BlockESP::onRenderLevel(RenderLevelEvent& event) {
     MCDrawUtil3D dc { ci->levelRenderer, SDK::ScreenContext::instance3d, SDK::MaterialPtr::getUIColor() };
 
     size_t cap = std::min(found.size(), static_cast<size_t>(std::get<FloatValue>(maxBlocks).value));
+    std::vector<MCDrawUtil3D::ColoredBox> regularBoxes;
+    std::vector<MCDrawUtil3D::ColoredThickBox> thickBoxes;
+    regularBoxes.reserve(cap);
+    thickBoxes.reserve(cap);
     for (size_t i = 0; i < cap; i++) {
         auto& f = found[i];
         if (f.entryIdx < 0 || f.entryIdx >= static_cast<int>(entries.size())) continue;
@@ -492,30 +506,16 @@ void BlockESP::onRenderLevel(RenderLevelEvent& event) {
         Vec3 l { static_cast<float>(f.pos.x), static_cast<float>(f.pos.y), static_cast<float>(f.pos.z) };
         Vec3 h { l.x + 1.f, l.y + 1.f, l.z + 1.f };
 
+        AABB box { l, h };
         if (raw <= 0.5f) {
-            dc.drawBox(AABB { l, h }, col);
+            regularBoxes.push_back({ box, col });
         } else {
-            std::pair<Vec3, Vec3> edges[12] = {
-                { { l.x, l.y, l.z }, { h.x, l.y, l.z } },
-                { { h.x, l.y, l.z }, { h.x, l.y, h.z } },
-                { { h.x, l.y, h.z }, { l.x, l.y, h.z } },
-                { { l.x, l.y, h.z }, { l.x, l.y, l.z } },
-                { { l.x, h.y, l.z }, { h.x, h.y, l.z } },
-                { { h.x, h.y, l.z }, { h.x, h.y, h.z } },
-                { { h.x, h.y, h.z }, { l.x, h.y, h.z } },
-                { { l.x, h.y, h.z }, { l.x, h.y, l.z } },
-                { { l.x, l.y, l.z }, { l.x, h.y, l.z } },
-                { { h.x, l.y, l.z }, { h.x, h.y, l.z } },
-                { { h.x, l.y, h.z }, { h.x, h.y, h.z } },
-                { { l.x, l.y, h.z }, { l.x, h.y, h.z } },
-            };
-            for (auto& edge : edges) {
-                dc.drawThickLine(edge.first, edge.second, th, col);
-            }
+            thickBoxes.push_back({ box, th, col });
         }
     }
 
-    dc.flush();
+    dc.drawBoxes(regularBoxes);
+    dc.drawThickBoxes(thickBoxes);
 }
 
 void BlockESP::onRenderOverlay(Event&) {

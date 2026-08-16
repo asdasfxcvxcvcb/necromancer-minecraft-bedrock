@@ -13,6 +13,7 @@ namespace SDK {
 }
 
 class RenderLevelEvent;
+class RenderLayerEvent;
 
 class Backtrack : public Module {
 public:
@@ -26,13 +27,21 @@ public:
     void onReceivePacket(Event& evG);
     void onAttack(Event& evG);
     void onClick(Event& evG);
+    void onKey(Event& evG);
     void onLeaveGame(Event& evG);
     void onRenderLevel(RenderLevelEvent& event);
+    void onRenderLayer(RenderLayerEvent& event);
 
-    // Ghost box for a player at the currently configured age, in world space. Lets
-    // Aimbot and Triggerbot aim at the lag record instead of the live model without
-    // duplicating the sampling or the interpolation.
-    bool getGhostBox(uint64_t runtimeID, AABB& out);
+    struct GhostRecord {
+        AABB box {};
+        float ageMs = -1.f;
+    };
+
+    bool getGhostBox(uint64_t runtimeID, AABB& out, float* outAgeMs = nullptr);
+    bool getGhostRecords(uint64_t runtimeID, std::vector<GhostRecord>& out);
+    bool prepareGhostAttack(uint64_t runtimeID, AABB const& ghostBox, Vec3 const& hitPoint, float ageMs);
+    bool queueGhostAttack(uint64_t runtimeID, AABB const& ghostBox, Vec3 const& hitPoint, float ageMs);
+    void allowDirectAttack(uint64_t runtimeID);
 
 private:
     struct Sample {
@@ -111,6 +120,8 @@ private:
     void sendLatencyProbe(float offsetMs);
 
     void applyFakeLatency();
+    bool isLootContainer(BlockPos const& pos);
+    bool fakeLatencyStopped(std::chrono::steady_clock::time_point now) const;
     // How far back the ghost box / target lookup should reach. Fake latency counts
     // toward this: if the server believes we are 200ms behind, the position it
     // validates our hits against is 200ms further into the past, so the box has to
@@ -126,6 +137,9 @@ private:
     ValueType timeMs = FloatValue(150.f);
     ValueType fakeLatencyMs = FloatValue(0.f);
     ValueType stackLatencyDelayMs = FloatValue(0.f);
+    ValueType stopFakeLatencyWhenLooting = BoolValue(false);
+    ValueType stopFakeLatencyWhenUsingItem = BoolValue(false);
+    ValueType stopFakeLatencyWhenOpeningInventory = BoolValue(false);
     ValueType onlyLastRecord = BoolValue(false);
     // Records taken while the enemy was off the ground stay visible but cannot be
     // attacked by anything.
@@ -137,9 +151,11 @@ private:
     ValueType ghostCount = FloatValue(4.f);
     ValueType hitbox = BoolValue(true);
     ValueType hitboxColor = ColorValue(1.f, 0.55f, 0.f, 0.6f);
+    ValueType hitboxThickness = FloatValue(0.3f);
     ValueType throughWalls = BoolValue(true);
 
     std::unordered_map<uint64_t, std::deque<Sample>> buffers;
+    std::chrono::steady_clock::time_point nextSampleAt {};
     // One server tick. Records are spaced on tick boundaries so a shift lands exactly on
     // a neighbouring one.
     static constexpr float recordStepMs = 50.f;
@@ -147,12 +163,30 @@ private:
     std::deque<QueuedAttack> attackQueue;
     // Last value pushed into LatencySpoof, so the slider is only applied on change.
     uint32_t appliedLatencyMs = 0;
+    bool fakeLatencyPaused = false;
+    std::chrono::steady_clock::time_point inventoryAttemptUntil {};
+    std::chrono::steady_clock::time_point lootAttemptUntil {};
+    std::chrono::steady_clock::time_point inventoryScreenSeenAt {};
+    std::chrono::steady_clock::time_point lootScreenSeenAt {};
     uint64_t pendingRID = 0;
     std::chrono::steady_clock::time_point pendingAt {};
     uint64_t swallowRID = 0;
     std::chrono::steady_clock::time_point swallowUntil {};
     uint64_t reissueRID = 0;
     std::chrono::steady_clock::time_point reissueUntil {};
+    struct PreparedGhostAttack {
+        uint64_t runtimeID = 0;
+        AABB box {};
+        Vec3 hitPoint {};
+        float ageMs = -1.f;
+        std::chrono::steady_clock::time_point expiresAt {};
+        bool active = false;
+    };
+
+    uint64_t directAttackRID = 0;
+    std::chrono::steady_clock::time_point directAttackUntil {};
+    PreparedGhostAttack preparedGhostAttack {};
+    bool suppressNextClick = false;
     bool hasClickPending = false;
     std::chrono::steady_clock::time_point clickPendingAt {};
     std::chrono::steady_clock::time_point lastAttackEventAt {};

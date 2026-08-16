@@ -14,16 +14,24 @@ namespace SDK {
         CLASS_FIELD(std::string, _namespace, 0x100);    // minecraft
         CLASS_FIELD(HashedString, namespacedId, 0x120); // minecraft:bow
 
-        int getMaxUseDuration(class ItemStackBase* item) { return memory::callVirtual<int>(this, 5, item); }
+        int getMaxUseDuration(class ItemStackBase* item) {
+            return memory::callVirtual<int>(this, Signatures::VtableIndex::Item::getMaxUseDuration, item);
+        }
 
-        bool isGlint(class ItemStackBase* item) { return memory::callVirtual<bool>(this, 0x28, item); }
+        bool isGlint(class ItemStackBase* item) {
+            return memory::callVirtual<bool>(this, Signatures::VtableIndex::Item::isGlint, item);
+        }
 
-        int getMaxDamage() { return memory::callVirtual<int>(this, 0x24); }
+        int getMaxDamage() {
+            return memory::callVirtual<int>(this, Signatures::VtableIndex::Item::getMaxDamage);
+        }
 
-        bool canDestroySpecial(class Block const* block) { return memory::callVirtual<bool>(this, 0x21, block); }
+        bool canDestroySpecial(class Block const* block) {
+            return memory::callVirtual<bool>(this, Signatures::VtableIndex::Item::canDestroySpecial, block);
+        }
 
         float getDestroySpeed(class ItemStackBase const* item, class Block const* block) {
-            return memory::callVirtual<float>(this, 0x58, item, block);
+            return memory::callVirtual<float>(this, Signatures::VtableIndex::Item::getDestroySpeed, item, block);
         }
 
         short getDamageValue(class CompoundTag* tag) {

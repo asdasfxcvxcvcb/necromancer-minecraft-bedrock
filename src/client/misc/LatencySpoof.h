@@ -23,6 +23,11 @@ namespace LatencySpoof {
     void setLatency(uint32_t ms);
     uint32_t getLatency();
 
+    void setChoking(bool enabled);
+    void clearChoke();
+    bool isChoking();
+    uint64_t chokedCount();
+
     // Send the next few datagrams immediately, ignoring the configured latency.
     //
     // At the socket layer a datagram is opaque (encrypted + compressed), so we

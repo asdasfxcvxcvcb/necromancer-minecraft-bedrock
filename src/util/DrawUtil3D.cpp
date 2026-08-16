@@ -70,6 +70,11 @@ void MCDrawUtil3D::fillQuad(Vec3 p1, Vec3 p2, Vec3 p3, Vec3 p4, d2d::Color const
     emitQuadVertices(p1, p2, p3, p4);
 }
 
+void MCDrawUtil3D::fillBox(AABB const& box, d2d::Color const& color) {
+    openBatch(SDK::Primitive::Quad, 48, color);
+    emitFilledBoxVertices(box);
+}
+
 void MCDrawUtil3D::emitThickLineVertices(Vec3 const& p1, Vec3 const& p2, float thickness) {
     Vec3 dir = p2 - p1;
     float lenSq = dir.magnitudeSq();
@@ -99,18 +104,37 @@ void MCDrawUtil3D::emitThickLineVertices(Vec3 const& p1, Vec3 const& p2, float t
     }
 }
 
-void MCDrawUtil3D::drawThickLine(Vec3 const& p1, Vec3 const& p2, float thickness, d2d::Color const& color) {
-    Vec3 dir = p2 - p1;
-    if (dir.magnitude() <= 0.0001f) return;
-
-    openBatch(SDK::Primitive::Quad, thickLineVertexCount, color);
-    emitThickLineVertices(p1, p2, thickness);
+void MCDrawUtil3D::emitFilledBoxVertices(AABB const& box) {
+    Vec3 const& l = box.lower;
+    Vec3 const& h = box.higher;
+    emitQuadVertices({ l.x, l.y, l.z }, { h.x, l.y, l.z }, { h.x, l.y, h.z }, { l.x, l.y, h.z });
+    emitQuadVertices({ l.x, h.y, l.z }, { h.x, h.y, l.z }, { h.x, h.y, h.z }, { l.x, h.y, h.z });
+    emitQuadVertices({ l.x, l.y, l.z }, { h.x, l.y, l.z }, { h.x, h.y, l.z }, { l.x, h.y, l.z });
+    emitQuadVertices({ l.x, l.y, h.z }, { h.x, l.y, h.z }, { h.x, h.y, h.z }, { l.x, h.y, h.z });
+    emitQuadVertices({ l.x, l.y, l.z }, { l.x, l.y, h.z }, { l.x, h.y, h.z }, { l.x, h.y, l.z });
+    emitQuadVertices({ h.x, l.y, l.z }, { h.x, l.y, h.z }, { h.x, h.y, h.z }, { h.x, h.y, l.z });
 }
 
-void MCDrawUtil3D::drawThickBox(AABB const& bb, float thickness, d2d::Color const& color) {
-    Vec3 const& l = bb.lower;
-    Vec3 const& h = bb.higher;
+void MCDrawUtil3D::emitBoxVertices(AABB const& box) {
+    Vec3 const& l = box.lower;
+    Vec3 const& h = box.higher;
+    emitLineVertices({ l.x, l.y, l.z }, { l.x, h.y, l.z });
+    emitLineVertices({ h.x, l.y, l.z }, { h.x, h.y, l.z });
+    emitLineVertices({ l.x, l.y, h.z }, { l.x, h.y, h.z });
+    emitLineVertices({ h.x, l.y, h.z }, { h.x, h.y, h.z });
+    emitLineVertices({ l.x, l.y, l.z }, { h.x, l.y, l.z });
+    emitLineVertices({ h.x, l.y, l.z }, { h.x, l.y, h.z });
+    emitLineVertices({ h.x, l.y, h.z }, { l.x, l.y, h.z });
+    emitLineVertices({ l.x, l.y, h.z }, { l.x, l.y, l.z });
+    emitLineVertices({ l.x, h.y, l.z }, { h.x, h.y, l.z });
+    emitLineVertices({ h.x, h.y, l.z }, { h.x, h.y, h.z });
+    emitLineVertices({ h.x, h.y, h.z }, { l.x, h.y, h.z });
+    emitLineVertices({ l.x, h.y, h.z }, { l.x, h.y, l.z });
+}
 
+int MCDrawUtil3D::thickBoxVertexCountFor(AABB const& box) const {
+    Vec3 const& l = box.lower;
+    Vec3 const& h = box.higher;
     Vec3 const edges[12][2] = {
         { { l.x, l.y, l.z }, { h.x, l.y, l.z } },
         { { h.x, l.y, l.z }, { h.x, l.y, h.z } },
@@ -125,45 +149,105 @@ void MCDrawUtil3D::drawThickBox(AABB const& bb, float thickness, d2d::Color cons
         { { h.x, l.y, h.z }, { h.x, h.y, h.z } },
         { { l.x, l.y, h.z }, { l.x, h.y, h.z } },
     };
-
     constexpr float epsSq = 0.0001f * 0.0001f;
     int live = 0;
     for (auto const& edge : edges) {
-        if ((edge[1] - edge[0]).magnitudeSq() > epsSq) ++live;
+        if ((edge[1] - edge[0]).magnitudeSq() > epsSq) live++;
     }
-    if (live == 0) return;
+    return live * thickLineVertexCount;
+}
 
-    openBatch(SDK::Primitive::Quad, live * thickLineVertexCount, color);
+void MCDrawUtil3D::emitThickBoxVertices(AABB const& box, float thickness) {
+    Vec3 const& l = box.lower;
+    Vec3 const& h = box.higher;
+    Vec3 const edges[12][2] = {
+        { { l.x, l.y, l.z }, { h.x, l.y, l.z } },
+        { { h.x, l.y, l.z }, { h.x, l.y, h.z } },
+        { { h.x, l.y, h.z }, { l.x, l.y, h.z } },
+        { { l.x, l.y, h.z }, { l.x, l.y, l.z } },
+        { { l.x, h.y, l.z }, { h.x, h.y, l.z } },
+        { { h.x, h.y, l.z }, { h.x, h.y, h.z } },
+        { { h.x, h.y, h.z }, { l.x, h.y, h.z } },
+        { { l.x, h.y, h.z }, { l.x, h.y, l.z } },
+        { { l.x, l.y, l.z }, { l.x, h.y, l.z } },
+        { { h.x, l.y, l.z }, { h.x, h.y, l.z } },
+        { { h.x, l.y, h.z }, { h.x, h.y, h.z } },
+        { { l.x, l.y, h.z }, { l.x, h.y, h.z } },
+    };
+    constexpr float epsSq = 0.0001f * 0.0001f;
     for (auto const& edge : edges) {
         if ((edge[1] - edge[0]).magnitudeSq() > epsSq) emitThickLineVertices(edge[0], edge[1], thickness);
     }
 }
 
+void MCDrawUtil3D::drawThickLine(Vec3 const& p1, Vec3 const& p2, float thickness, d2d::Color const& color) {
+    Vec3 dir = p2 - p1;
+    if (dir.magnitude() <= 0.0001f) return;
+
+    openBatch(SDK::Primitive::Quad, thickLineVertexCount, color);
+    emitThickLineVertices(p1, p2, thickness);
+}
+
+void MCDrawUtil3D::drawThickBox(AABB const& bb, float thickness, d2d::Color const& color) {
+    int vertexCount = thickBoxVertexCountFor(bb);
+    if (vertexCount == 0) return;
+    openBatch(SDK::Primitive::Quad, vertexCount, color);
+    emitThickBoxVertices(bb, thickness);
+}
+
 void MCDrawUtil3D::drawBox(AABB const& bb, d2d::Color const& color) {
-    Vec3 const& l = bb.lower;
-    Vec3 const& h = bb.higher;
-
-    Vec3 const verticals[4][2] = {
-        { { l.x, l.y, l.z }, { l.x, h.y, l.z } },
-        { { h.x, l.y, l.z }, { h.x, h.y, l.z } },
-        { { l.x, l.y, h.z }, { l.x, h.y, h.z } },
-        { { h.x, l.y, h.z }, { h.x, h.y, h.z } },
-    };
-
     openBatch(SDK::Primitive::LineList, 24, color);
-    for (auto const& edge : verticals) {
-        emitLineVertices(edge[0], edge[1]);
+    emitBoxVertices(bb);
+}
+
+void MCDrawUtil3D::fillBoxes(std::span<ColoredBox const> boxes) {
+    if (boxes.empty()) return;
+    openBatch(SDK::Primitive::Quad, static_cast<int>(boxes.size() * 48), boxes.front().color);
+    for (auto const& entry : boxes) {
+        screenContext->tess->color(entry.color);
+        emitFilledBoxVertices(entry.box);
     }
+    flush();
+}
 
-    emitLineVertices({ l.x, l.y, l.z }, { h.x, l.y, l.z });
-    emitLineVertices({ h.x, l.y, l.z }, { h.x, l.y, h.z });
-    emitLineVertices({ h.x, l.y, h.z }, { l.x, l.y, h.z });
-    emitLineVertices({ l.x, l.y, h.z }, { l.x, l.y, l.z });
+void MCDrawUtil3D::drawBoxes(std::span<ColoredBox const> boxes) {
+    if (boxes.empty()) return;
+    openBatch(SDK::Primitive::LineList, static_cast<int>(boxes.size() * 24), boxes.front().color);
+    for (auto const& entry : boxes) {
+        screenContext->tess->color(entry.color);
+        emitBoxVertices(entry.box);
+    }
+    flush();
+}
 
-    emitLineVertices({ l.x, h.y, l.z }, { h.x, h.y, l.z });
-    emitLineVertices({ h.x, h.y, l.z }, { h.x, h.y, h.z });
-    emitLineVertices({ h.x, h.y, h.z }, { l.x, h.y, h.z });
-    emitLineVertices({ l.x, h.y, h.z }, { l.x, h.y, l.z });
+void MCDrawUtil3D::drawThickBoxes(std::span<ColoredThickBox const> boxes) {
+    if (boxes.empty()) return;
+    int vertexCount = 0;
+    for (auto const& entry : boxes) vertexCount += thickBoxVertexCountFor(entry.box);
+    if (vertexCount == 0) return;
+    openBatch(SDK::Primitive::Quad, vertexCount, boxes.front().color);
+    for (auto const& entry : boxes) {
+        screenContext->tess->color(entry.color);
+        emitThickBoxVertices(entry.box, entry.thickness);
+    }
+    flush();
+}
+
+void MCDrawUtil3D::drawThickLines(std::span<ColoredThickLine const> lines) {
+    if (lines.empty()) return;
+    constexpr float epsSq = 0.0001f * 0.0001f;
+    int vertexCount = 0;
+    for (auto const& line : lines) {
+        if ((line.end - line.start).magnitudeSq() > epsSq) vertexCount += thickLineVertexCount;
+    }
+    if (vertexCount == 0) return;
+    openBatch(SDK::Primitive::Quad, vertexCount, lines.front().color);
+    for (auto const& line : lines) {
+        if ((line.end - line.start).magnitudeSq() <= epsSq) continue;
+        screenContext->tess->color(line.color);
+        emitThickLineVertices(line.start, line.end, line.thickness);
+    }
+    flush();
 }
 
 void MCDrawUtil3D::flush() {

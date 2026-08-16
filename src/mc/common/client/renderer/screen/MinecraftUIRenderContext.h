@@ -2,6 +2,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <mc/Addresses.h>
+
 #include "../TexturePtr.h"
 #include "ScreenContext.h"
 
@@ -87,18 +89,20 @@ namespace SDK {
         ScreenContext* screenContext;
 
         void flushText(float lastFlush) {
-            memory::callVirtual<void, float, std::optional<float>>(this, 6, lastFlush, {});
+            memory::callVirtual<void, float, std::optional<float>>(
+                this, Signatures::VtableIndex::MinecraftUIRenderContext::flushText, lastFlush, {});
         }
 
         void drawImage(TexturePtr const& texture, Vec2 const& pos, Vec2 const& size, Vec2 const& uvPos,
                        Vec2 const& uvSize) {
             memory::callVirtual<void, BedrockTextureData const&, Vec2 const&, Vec2 const&, Vec2 const&, Vec2 const&,
-                                bool>(this, 7, *texture.textureData, pos, size, uvPos, uvSize, false);
+                                bool>(this, Signatures::VtableIndex::MinecraftUIRenderContext::drawImage,
+                                      *texture.textureData, pos, size, uvPos, uvSize, false);
         }
 
         void drawNineslice(TexturePtr const& texture, NinesliceInfo const& info) {
-            memory::callVirtual<void, BedrockTextureData const&, NinesliceInfo const&>(this, 8, *texture.textureData,
-                                                                                       info);
+            memory::callVirtual<void, BedrockTextureData const&, NinesliceInfo const&>(
+                this, Signatures::VtableIndex::MinecraftUIRenderContext::drawNineslice, *texture.textureData, info);
         }
 
         virtual ~MinecraftUIRenderContext() = 0;                                      // 0x0

@@ -1,14 +1,19 @@
 #include "pch.h"
 #include "ClientInstance.h"
 
+#include "mc/Addresses.h"
 #include "Platform_GameCore.h"
 
 SDK::ClientInstance* SDK::ClientInstance::instance = nullptr;
 
 SDK::ClientInstance* SDK::ClientInstance::get() {
     if (!instance) {
-        // IMinecraftGame
-        const auto mcgame = Platform_GameCore::get()->getMinecraftGame();
+        const auto platform = Platform_GameCore::get();
+        if (!platform) {
+            return nullptr;
+        }
+
+        const auto mcgame = platform->getMinecraftGame();
         if (!mcgame) {
             return nullptr;
         }
@@ -19,11 +24,11 @@ SDK::ClientInstance* SDK::ClientInstance::get() {
 }
 
 SDK::BlockSource* SDK::ClientInstance::getRegion() {
-    return memory::callVirtual<BlockSource*>(this, 0x1E);
+    return memory::callVirtual<BlockSource*>(this, Signatures::VtableIndex::ClientInstance::getRegion);
 }
 
 SDK::LocalPlayer* SDK::ClientInstance::getLocalPlayer() {
-    return memory::callVirtual<LocalPlayer*>(this, 0x1F);
+    return memory::callVirtual<LocalPlayer*>(this, Signatures::VtableIndex::ClientInstance::getLocalPlayer);
 }
 
 SDK::GuiData* SDK::ClientInstance::getGuiData() {
@@ -31,11 +36,12 @@ SDK::GuiData* SDK::ClientInstance::getGuiData() {
 }
 
 SDK::Options* SDK::ClientInstance::getOptions() {
-    return hat::member_at<Options*>(this, 0xC68);
+    return hat::member_at<Options*>(this, 0xD78);
 }
 
 SDK::ResourcePackManager& SDK::ClientInstance::getResourcePackManager() {
-    return *memory::callVirtual<ResourcePackManager*>(this, 0x60);
+    return *memory::callVirtual<ResourcePackManager*>(this,
+                                                     Signatures::VtableIndex::ClientInstance::getResourcePackManager);
 }
 
 void SDK::ClientInstance::grabCursor() {

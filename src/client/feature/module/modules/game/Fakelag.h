@@ -8,6 +8,7 @@ namespace SDK {
 }
 
 class RenderLevelEvent;
+class RenderLayerEvent;
 
 class Fakelag : public Module {
 public:
@@ -20,10 +21,14 @@ public:
     void onPacketReceive(Event& evG);
     void onAttack(Event& evG);
     void onClick(Event& evG);
+    void onKey(Event& evG);
+    void onLeaveGame(Event& evG);
     void onRenderLevel(RenderLevelEvent& event);
+    void onRenderLayer(RenderLayerEvent& event);
 
 private:
     void flushKnockback();
+    void requestRelease();
     bool enemyWatchingGhost(SDK::LocalPlayer* lp);
     bool isPlayerRuntimeID(uint64_t runtimeID);
     void rollRangeThreshold();
@@ -31,6 +36,13 @@ private:
     bool damageOnlyMode();
     bool wallBetweenGhostAndPlayer(SDK::LocalPlayer* lp);
     bool isBreakingBlock(SDK::LocalPlayer* lp);
+    bool isLootContainer(BlockPos const& pos);
+    bool releaseForInteractionActive(std::chrono::steady_clock::time_point now) const;
+
+    EnumData chokedHitboxStyle;
+    static constexpr int style_outline = 0;
+    static constexpr int style_filled = 1;
+    static constexpr int style_both = 2;
 
     ValueType suppressKnockback = BoolValue(true);
     ValueType expertSettings = BoolValue(false);
@@ -43,6 +55,9 @@ private:
     ValueType unchokeOnHit = BoolValue(true);
     ValueType unchokeOnBuild = BoolValue(false);
     ValueType unchokeOnBreak = BoolValue(false);
+    ValueType unchokeOnUseItem = BoolValue(false);
+    ValueType unchokeWhileLooting = BoolValue(false);
+    ValueType unchokeWhenOpeningInventory = BoolValue(false);
     ValueType riskyHeightChange = BoolValue(true);
     ValueType unchokeAtCorners = BoolValue(true);
     ValueType cornerThickness = FloatValue(0.7f);
@@ -62,6 +77,10 @@ private:
     std::chrono::steady_clock::time_point lastHitAt {};
     std::chrono::steady_clock::time_point lastEnemySwingAt {};
     std::chrono::steady_clock::time_point gapUntil {};
+    std::chrono::steady_clock::time_point inventoryAttemptUntil {};
+    std::chrono::steady_clock::time_point lootAttemptUntil {};
+    std::chrono::steady_clock::time_point inventoryScreenSeenAt {};
+    std::chrono::steady_clock::time_point lootScreenSeenAt {};
     bool hitPending = false;
     bool releasePending = false;
     bool gapPhase = false;
