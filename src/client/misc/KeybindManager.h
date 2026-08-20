@@ -63,6 +63,7 @@ public:
     void removeEdit(std::string const& bindName, std::string const& module, std::string const& setting);
     static KeybindEdit* findEdit(Keybind& bind, std::string const& module, std::string const& setting);
     static std::wstring describeEdit(KeybindEdit const& edit);
+    static std::string settingOwnerModule(class Setting* set);
 
     bool isShown(Keybind const& bind) const { return !bind.hidden && (bind.active || !bind.showOnlyWhenActive); }
 

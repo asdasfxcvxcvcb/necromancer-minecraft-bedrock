@@ -17,4 +17,6 @@ public:
     PacketHooks();
 
     void initPacketSender(SDK::PacketSender* sender);
+
+    static bool injectReceived(std::shared_ptr<SDK::Packet>& packet);
 };

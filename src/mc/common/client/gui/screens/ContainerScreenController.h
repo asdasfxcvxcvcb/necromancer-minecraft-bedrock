@@ -8,7 +8,7 @@ namespace SDK {
 
     class ContainerScreenController : public ScreenController {
     public:
-        CLASS_FIELD(void*, containerManager, 0x11C0);
+        CLASS_FIELD(void*, containerManager, 0x12C0);
 
         void _handleTakePlace(const std::string& viewName, int slot, bool b);
         void* _getSelectedSlotInfo();

@@ -8,6 +8,8 @@ namespace SDK {
         MOVE_ACTOR_ABSOLUTE = 0x12,
         MOVE_PLAYER = 0x13,
         INTERACT = 0x21,
+        CONTAINER_OPEN = 0x2E,
+        CONTAINER_CLOSE = 0x2F,
         ACTOR_EVENT = 0x1B,
         SET_ENTITY_DATA = 0x27,
         SET_ENTITY_MOTION = 0x28,

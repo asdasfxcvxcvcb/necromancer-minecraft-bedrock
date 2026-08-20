@@ -123,7 +123,7 @@ bool ClickGUI::isModuleInTab(Module& mod) const {
                name == "AntiObs";
     case MOVEMENT:
         return name == "ToggleSprintSneak" || name == "NoFall" || name == "AntiAFK" || name == "Fakelag" ||
-               name == "Velocity" || name == "LegitScaffold";
+               name == "Velocity" || name == "LegitScaffold" || name == "Timer";
     case MISC:
         return name == "KillNotification" || name == "SkinStealer" || name == "TextHotkey" || name == "AntiBot" ||
                name == "DisableMouseWheel" || name == "ChatSpammer" || name == "AutoBlock" || name == "ChestStealer" ||
@@ -659,9 +659,9 @@ void ClickGUI::renderKeybindsTab(D2DUtil& dc, d2d::Rect const& area, float modul
     y += rowH + rowH * 0.25f;
     scrollMax = std::max(scrollMax, std::max(0.f, y - content.bottom) + lerpScroll);
 
-    float bindRowH = rowH * 1.35f;
+    float bindRowH = rowH * 1.5f;
     float innerPad = rowH * 0.3f;
-    float ctrlH = rowH * 0.75f;
+    float ctrlH = rowH * 0.95f;
     float gap = innerPad * 0.6f;
     float delSize = ctrlH * 0.82f;
     float dotW = ctrlH * 0.35f;
@@ -725,7 +725,7 @@ void ClickGUI::renderKeybindsTab(D2DUtil& dc, d2d::Rect const& area, float modul
         } else {
             d2d::Color nameCol = bind.hidden ? d2d::Color(1.f, 1.f, 1.f, 0.45f) : d2d::Colors::WHITE;
             dc.drawSingleLineFitted(nameRc, util::StrToWStr(bindName), nameCol, FontSelection::PrimaryRegular,
-                                    ctrlH * 0.5f, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                                    ctrlH * 0.56f, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             if (shouldSelect(nameRc, cursorPos)) {
                 setTooltip(LocalizeString::get("client.ui.clickGui.keybinds.rename.desc"));
                 if (justClicked[0]) {
@@ -742,7 +742,7 @@ void ClickGUI::renderKeybindsTab(D2DUtil& dc, d2d::Rect const& area, float modul
             std::wstring summaryText = KeybindManager::describeGraph(bind);
             d2d::Color summaryCol = bind.graph.empty() ? d2d::Color(1.f, 0.55f, 0.15f, 0.75f)
                                                        : d2d::Color(1.f, 1.f, 1.f, 0.62f);
-            dc.drawSingleLineFitted(summaryRc, summaryText, summaryCol, FontSelection::PrimaryRegular, ctrlH * 0.45f,
+            dc.drawSingleLineFitted(summaryRc, summaryText, summaryCol, FontSelection::PrimaryRegular, ctrlH * 0.52f,
                                     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         } else {
             bool capturing = kbCapturingKey == bindName;
@@ -2231,6 +2231,11 @@ void ClickGUI::onRender(Event&) {
             *colorPicker.selectedColor = { d2dCol.r, d2dCol.g, d2dCol.b, d2dCol.a };
             colorPicker.setting->update();
             colorPicker.setting->userUpdate();
+            if (!kbEditingBind.empty()) {
+                nlohmann::json stored;
+                colVal.store(stored);
+                recordPickerEdit(colorPicker.setting, (size_t)Setting::Type::Color, std::move(stored));
+            }
             colorPicker = ColorPicker();
         }
     }
@@ -2476,7 +2481,7 @@ void ClickGUI::onClick(Event& evGeneric) {
                 std::clamp(kbParentPicker.scroll - delta, 0.f, kbParentPicker.scrollMax);
         } else if (blockPicker.mod && bPickerRect.contains(mouse)) {
             blockPicker.scroll = std::clamp(blockPicker.scroll - delta, 0.f, blockPicker.scrollMax);
-        } else if (itemSwitcherPicker.mod) {
+        } else if (itemSwitcherPicker.mod && iPickerRect.contains(mouse)) {
             itemSwitcherPicker.scroll = std::clamp(itemSwitcherPicker.scroll - delta, 0.f, itemSwitcherPicker.scrollMax);
         } else {
             this->scroll = std::clamp(scroll - delta, 0.f, scrollMax);
@@ -2576,8 +2581,8 @@ float ClickGUI::drawSetting(Setting* set, SettingGroup* group, Vec2 const& pos, 
         }
 
         textVal.str = tb->getText();
-        if (kbBind && shouldSelect(tb->getRect(), cursorPos)) {
-            setTooltip(LocalizeString::get("client.ui.clickGui.keybinds.notBindable.desc"));
+        if (kbBind && shouldSelect(tb->getRect(), cursorPos) && group) {
+            kbHoverLabel = group->name() + "." + set->name();
         }
         auto label = set->getDisplayName();
         rightRc.bottom = rightRc.top + dc.getMeasuredTextHeight(
@@ -2991,7 +2996,7 @@ float ClickGUI::drawSetting(Setting* set, SettingGroup* group, Vec2 const& pos, 
             }
         }
         if (kbBind && shouldSelect(colRect, cursorPos)) {
-            setTooltip(LocalizeString::get("client.ui.clickGui.keybinds.notBindable.desc"));
+            kbHoverLabel = group->name() + "." + set->name();
         }
         return pos.y + rowHeight;
     } break;
@@ -3212,7 +3217,13 @@ float ClickGUI::drawSetting(Setting* set, SettingGroup* group, Vec2 const& pos, 
                                        btnRect.right - innerPad, btnRect.bottom - innerPad }
                              : RectF { btnRect.left + innerPad, btnRect.top + innerPad,
                                        btnRect.left + innerPad + iconSize, btnRect.bottom - innerPad };
-        dc.ctx->DrawBitmap(Necromancer::getAssets().folderIcon.getBitmap(), iconRect);
+        ID2D1Bitmap* buttonIcon = Necromancer::getAssets().folderIcon.getBitmap();
+        if (group && group->name() == "BlockESP" && set->name() == "blocks") {
+            buttonIcon = Necromancer::getAssets().blockEspIcon.getBitmap();
+        } else if (group && group->name() == "ItemSwitcher" && set->name() == "openPicker") {
+            buttonIcon = Necromancer::getAssets().itemSwitchIcon.getBitmap();
+        }
+        dc.ctx->DrawBitmap(buttonIcon, iconRect);
 
         RectF textRect = rtl ? RectF { btnRect.left + innerPad * 0.5f, btnRect.top, iconRect.left - innerPad,
                                        btnRect.bottom }
@@ -3597,8 +3608,26 @@ void ClickGUI::drawColorPicker() {
     util::KeepInBounds(cPickerRect, { 0.f, 0.f, ss.width, ss.height });
 }
 
+void ClickGUI::recordPickerEdit(Setting* set, size_t valueType, nlohmann::json value) {
+    if (kbEditingBind.empty() || !set) return;
+    auto owner = KeybindManager::settingOwnerModule(set);
+    if (owner.empty()) return;
+    KeybindManager::get().recordEdit(kbEditingBind, owner, set->name(), valueType, std::move(value));
+}
+
+void ClickGUI::recordBlockListEdit(BlockESP* mod) {
+    if (kbEditingBind.empty() || !mod) return;
+    Setting* data = nullptr;
+    mod->settings->forEach([&](std::shared_ptr<Setting> s) {
+        if (!data && s->name() == "blockList") data = s.get();
+    });
+    if (!data) return;
+    recordPickerEdit(data, (size_t)Setting::Type::Text, nlohmann::json(mod->serializedBlocks()));
+}
+
 void ClickGUI::openBlockPicker(BlockESP* mod) {
     if (!mod || blockPicker.mod == mod) return;
+    if (itemSwitcherPicker.mod) closeItemSwitcher();
     blockPicker = BlockPicker();
     blockPicker.mod = mod;
     if (!blockSearchRegistered) {
@@ -3636,15 +3665,17 @@ void ClickGUI::closeBlockPicker() {
 
 void ClickGUI::openItemSwitcher(ItemSwitcher* mod) {
     if (!mod) return;
+    if (blockPicker.mod) closeBlockPicker();
+    itemSwitcherPicker = ItemSwitcherPicker();
     itemSwitcherPicker.mod = mod;
-    itemSwitcherPicker.scroll = 0.f;
-    itemSwitcherPicker.scrollMax = 0.f;
-    itemSwitcherSearchBox.reset();
-    itemSwitcherSearchBox.setSelected(false);
+    itemSwitcherPicker.justOpened = true;
     if (!itemSwitcherSearchRegistered) {
         Necromancer::get().addTextBox(&itemSwitcherSearchBox);
         itemSwitcherSearchRegistered = true;
     }
+    itemSwitcherSearchBox.reset();
+    itemSwitcherSearchBox.setSelected(false);
+    ItemCatalog::get().entries();
 }
 
 void ClickGUI::closeItemSwitcher() {
@@ -3652,6 +3683,7 @@ void ClickGUI::closeItemSwitcher() {
     itemSwitcherSearchBox.setSelected(false);
     itemSwitcherSearchBox.reset();
     itemSwitcherPicker = ItemSwitcherPicker();
+    iPickerRect = {};
 }
 
 void ClickGUI::drawItemSwitcher(D2DUtil& dc) {
@@ -3660,6 +3692,7 @@ void ClickGUI::drawItemSwitcher(D2DUtil& dc) {
 
     auto& cursorPos = SDK::ClientInstance::get()->cursorPos;
     auto accentColor = d2d::Color(Necromancer::get().getAccentColor().getMainColor());
+    bool pickerRecording = !kbEditingBind.empty();
 
     float w = rect.getWidth() * 0.28f;
     float pad = w * 0.04f;
@@ -3672,23 +3705,34 @@ void ClickGUI::drawItemSwitcher(D2DUtil& dc) {
         rect.centerX() - w * 0.5f, rect.centerY() - rect.getHeight() * 0.32f,
         rect.centerX() + w * 0.5f, rect.centerY() + rect.getHeight() * 0.32f
     };
+    iPickerRect = pickerRect;
     dc.fillRoundedRectangle(pickerRect, d2d::Color::RGB(0x7, 0x7, 0x7).asAlpha(0.95f), 12.f);
-    dc.drawRoundedRectangle(pickerRect, d2d::Color(1.f, 1.f, 1.f, 0.12f), 12.f, 1.f, DrawUtil::OutlinePosition::Inside);
+    dc.drawRoundedRectangle(pickerRect,
+                            pickerRecording ? accentColor.asAlpha(0.8f) : d2d::Color(1.f, 1.f, 1.f, 0.12f), 12.f,
+                            pickerRecording ? 2.f : 1.f, DrawUtil::OutlinePosition::Inside);
 
     float top = pickerRect.top + pad;
     float left = pickerRect.left + pad;
     float right = pickerRect.right - pad;
 
+    d2d::Rect xRect { right - titleH * 0.7f, top + titleH * 0.15f, right, top + titleH * 0.85f };
     std::wstring title = LocalizeString::get("client.ui.clickGui.itemSwitcherPicker.title").value();
-    d2d::Rect titleRect = { left, top, right, top + titleH };
-    dc.drawText(titleRect, title, d2d::Color(1.f, 1.f, 1.f, 1.f), FontSelection::PrimarySemilight, titleH * 0.55f, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    d2d::Rect titleRect = { left, top, xRect.left - pad * 0.5f, top + titleH };
+    dc.drawText(titleRect, title, d2d::Color(1.f, 1.f, 1.f, 1.f), FontSelection::PrimarySemilight, titleH * 0.55f,
+                DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+
+    dc.ctx->DrawBitmap(Necromancer::getAssets().xIcon.getBitmap(), xRect.get());
+    if (justClicked[0] && !itemSwitcherPicker.justOpened && xRect.contains(cursorPos)) {
+        itemSwitcherPicker.queueClose = true;
+        playClickSound();
+    }
 
     float searchTop = titleRect.bottom + pad * 0.5f;
     d2d::Rect searchRect = { left, searchTop, right, searchTop + searchH };
     std::wstring searchText = itemSwitcherSearchBox.getText();
     bool searchSelected = itemSwitcherSearchBox.isSelected();
 
-    if (justClicked[0] && searchRect.contains(cursorPos)) {
+    if (justClicked[0] && !itemSwitcherPicker.justOpened && searchRect.contains(cursorPos)) {
         itemSwitcherSearchBox.setSelected(true);
     } else if (justClicked[0]) {
         itemSwitcherSearchBox.setSelected(false);
@@ -3714,40 +3758,69 @@ void ClickGUI::drawItemSwitcher(D2DUtil& dc) {
     }
 
     auto& entries = ItemCatalog::get().entries();
-    std::wstring targetId = mod ? std::get<TextValue>(mod->targetItem).str : L"";
+    std::wstring targetId = std::get<TextValue>(mod->targetItem).str;
+
+    int visibleCount = 0;
+    for (auto& entry : entries) {
+        if (!filter.empty() && entry.searchKey.find(filter) == std::wstring::npos) continue;
+        visibleCount++;
+    }
+
+    itemSwitcherPicker.scrollMax =
+        (std::max)(0.f, static_cast<float>(visibleCount) * (rowH + gap) - listRect.getHeight());
+    itemSwitcherPicker.scroll = std::clamp(itemSwitcherPicker.scroll, 0.f, itemSwitcherPicker.scrollMax);
 
     float contentY = listRect.top - itemSwitcherPicker.scroll;
     float rowWidth = listRect.getWidth();
-    itemSwitcherPicker.scrollMax = (std::max)(0.f, static_cast<float>(entries.size()) * (rowH + gap) - listRect.getHeight());
+
+    if (visibleCount == 0) {
+        dc.drawText(listRect, LocalizeString::get("client.ui.clickGui.keybinds.cond.noItems.name").value(),
+                    d2d::Color(1.f, 1.f, 1.f, 0.45f), FontSelection::PrimaryRegular, rowH * 0.4f,
+                    DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
 
     for (auto& entry : entries) {
         if (!filter.empty() && entry.searchKey.find(filter) == std::wstring::npos) continue;
 
         d2d::Rect rowRect = { listRect.left, contentY, listRect.left + rowWidth, contentY + rowH };
         if (rowRect.bottom > listRect.top && rowRect.top < listRect.bottom) {
-            bool selected = entry.id.size() == targetId.size() && std::equal(entry.id.begin(), entry.id.end(), targetId.begin(), targetId.end(), [](char c, wchar_t wc) { return c == wc; });
+            bool selected = util::StrToWStr(entry.id) == targetId;
             if (selected) {
                 dc.fillRoundedRectangle(rowRect, accentColor.asAlpha(0.3f), rowRect.getHeight() * 0.22f);
             } else if (rowRect.contains(cursorPos)) {
                 dc.fillRoundedRectangle(rowRect, d2d::Color(1.f, 1.f, 1.f, 0.08f), rowRect.getHeight() * 0.22f);
             }
 
-            if (justClicked[0] && rowRect.contains(cursorPos)) {
-                std::wstring wideId(entry.id.begin(), entry.id.end());
-                std::get<TextValue>(mod->targetItem).str = wideId;
-                closeItemSwitcher();
-                dc.ctx->PopAxisAlignedClip();
-                return;
+            if (justClicked[0] && !itemSwitcherPicker.justOpened && rowRect.contains(cursorPos)) {
+                mod->setTargetItem(entry.id);
+                if (pickerRecording) {
+                    Setting* targetSet = nullptr;
+                    mod->settings->forEach([&](std::shared_ptr<Setting> s) {
+                        if (!targetSet && s->name() == "targetItem") targetSet = s.get();
+                    });
+                    if (targetSet) {
+                        recordPickerEdit(targetSet, (size_t)Setting::Type::Text, nlohmann::json(entry.id));
+                    }
+                }
+                itemSwitcherPicker.queueClose = true;
             }
 
             float textLeft = rowRect.left + rowH * 0.15f;
             d2d::Rect textRect = { textLeft, rowRect.top, rowRect.right, rowRect.bottom };
-            dc.drawText(textRect, entry.displayName, d2d::Color(1.f, 1.f, 1.f, selected ? 1.f : 0.85f), FontSelection::PrimaryRegular, rowH * 0.4f, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            dc.drawText(textRect, entry.displayName, d2d::Color(1.f, 1.f, 1.f, selected ? 1.f : 0.85f),
+                        FontSelection::PrimaryRegular, rowH * 0.4f, DWRITE_TEXT_ALIGNMENT_LEADING,
+                        DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         }
         contentY += rowH + gap;
     }
 
     dc.ctx->PopAxisAlignedClip();
+
+    if (itemSwitcherPicker.justOpened) {
+        itemSwitcherPicker.justOpened = false;
+    } else if (justClicked[0] && !pickerRect.contains(cursorPos)) {
+        itemSwitcherPicker.queueClose = true;
+    }
 }
 
 void ClickGUI::drawKindPicker(D2DUtil& dc) {
@@ -3967,6 +4040,7 @@ void ClickGUI::drawBlockPicker(D2DUtil& dc) {
 
     auto& cursorPos = SDK::ClientInstance::get()->cursorPos;
     auto accentColor = d2d::Color(Necromancer::get().getAccentColor().getMainColor());
+    bool pickerRecording = !kbEditingBind.empty();
 
     bool savedClick = justClicked[0];
     if (colorPicker.setting) justClicked[0] = false;
@@ -3982,8 +4056,10 @@ void ClickGUI::drawBlockPicker(D2DUtil& dc) {
     bPickerRect.bottom = bPickerRect.top + pad + titleH + pad + rowH + pad + listH + pad;
 
     dc.fillRoundedRectangle(bPickerRect, d2d::Color::RGB(0x7, 0x7, 0x7).asAlpha(0.92f), 19.f * adaptedScale);
-    dc.drawRoundedRectangle(bPickerRect, d2d::Color::RGB(0, 0, 0).asAlpha(0.28f), 19.f * adaptedScale,
-                            4.f * adaptedScale, DrawUtil::OutlinePosition::Outside);
+    dc.drawRoundedRectangle(bPickerRect,
+                            pickerRecording ? accentColor.asAlpha(0.8f) : d2d::Color::RGB(0, 0, 0).asAlpha(0.28f),
+                            19.f * adaptedScale, pickerRecording ? 2.f : 4.f * adaptedScale,
+                            DrawUtil::OutlinePosition::Outside);
 
     RectF titleRect = { bPickerRect.left + pad, bPickerRect.top + pad, bPickerRect.right - pad - titleH,
                         bPickerRect.top + pad + titleH };
@@ -4151,6 +4227,7 @@ void ClickGUI::drawBlockPicker(D2DUtil& dc) {
                 blockPicker.editIndex--;
             }
             mod->removeBlock(static_cast<size_t>(removeIdx));
+            if (pickerRecording) recordBlockListEdit(mod);
         }
     } else {
         float backW = rowH;
@@ -4248,6 +4325,7 @@ void ClickGUI::drawBlockPicker(D2DUtil& dc) {
                 if (hov) setTooltip(LocalizeString::get("client.ui.clickGui.blockPicker.added.name").value());
             } else if (hov && justClicked[0]) {
                 mod->addBlock(cat);
+                if (pickerRecording) recordBlockListEdit(mod);
                 playClickSound();
                 blockPicker.addView = false;
                 blockPicker.scroll = 0.f;

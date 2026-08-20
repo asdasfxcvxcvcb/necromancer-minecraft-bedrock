@@ -16,6 +16,8 @@ Assets::Assets()
     , checkmarkIcon(GET_RESOURCE(checkmark_png))
     , document(GET_RESOURCE(document_png))
     , folderIcon(GET_RESOURCE(folder_png))
+    , blockEspIcon(GET_RESOURCE(blockesp_png))
+    , itemSwitchIcon(GET_RESOURCE(itemswitch_png))
 
 {
     allAssets.push_back(&this->necromancerLogo);
@@ -28,6 +30,8 @@ Assets::Assets()
     allAssets.push_back(&this->checkmarkIcon);
     allAssets.push_back(&this->document);
     allAssets.push_back(&this->folderIcon);
+    allAssets.push_back(&this->blockEspIcon);
+    allAssets.push_back(&this->itemSwitchIcon);
 }
 
 Assets::~Assets() {

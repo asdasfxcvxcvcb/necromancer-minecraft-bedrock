@@ -4,11 +4,13 @@
 // Renderer Assets
 LOAD_RESOURCE(arrow_png);
 LOAD_RESOURCE(arrow_back_png);
+LOAD_RESOURCE(blockesp_png);
 LOAD_RESOURCE(checkmark_png);
 LOAD_RESOURCE(cog_png);
 LOAD_RESOURCE(document_png);
 LOAD_RESOURCE(folder_png);
 LOAD_RESOURCE(hudedit_png);
+LOAD_RESOURCE(itemswitch_png);
 LOAD_RESOURCE(logo_png);
 LOAD_RESOURCE(searchicon_png);
 LOAD_RESOURCE(x_png);

@@ -19,6 +19,8 @@ public:
     Asset checkmarkIcon;
     Asset document;
     Asset folderIcon;
+    Asset blockEspIcon;
+    Asset itemSwitchIcon;
 
     void loadAll();
     void unloadAll();

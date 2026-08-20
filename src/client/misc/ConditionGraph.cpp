@@ -262,7 +262,7 @@ std::string const& CondEvalContext::heldItemId() {
         vHeld.clear();
         if (player && player->supplies && player->supplies->inventory) {
             int slot = player->supplies->selectedSlot;
-            if (slot >= 0) {
+            if (slot >= 0 && slot < 9) {
                 if (auto* stack = player->supplies->inventory->getItem(slot)) {
                     if (auto* item = stack->getItem()) {
                         vHeld = item->namespacedId.getString();
@@ -739,8 +739,9 @@ bool ConditionGraph::evaluate(CondEvalContext& ctx, ConditionRuntime& rt) {
             if (node.itemId.empty()) { result = false; break; }
             auto* plr = ctx.getPlayer();
             if (!plr || !plr->supplies || !plr->supplies->inventory) { result = false; break; }
-            auto* inv = plr->supplies->inventory;
             int sel = plr->supplies->selectedSlot;
+            if (sel < 0 || sel >= 9) { result = false; break; }
+            auto* inv = plr->supplies->inventory;
             auto* held = inv->getItem(sel);
             if (held && held->getItem()) {
                 if (held->getItem()->namespacedId.getString() == node.itemId) {
@@ -753,10 +754,10 @@ bool ConditionGraph::evaluate(CondEvalContext& ctx, ConditionRuntime& rt) {
                 if (!stack || !stack->getItem()) continue;
                 if (stack->getItem()->namespacedId.getString() == node.itemId) {
                     plr->supplies->selectedSlot = i;
-                    result = true; break;
+                    result = true;
+                    break;
                 }
             }
-            result = false;
             break;
         }
         case CondKind::Health: {

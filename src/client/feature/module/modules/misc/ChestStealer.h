@@ -21,6 +21,8 @@ public:
 private:
     ValueType time = FloatValue(1.f);
     ValueType closeAfterLoot = BoolValue(false);
+    ValueType enhanced = BoolValue(false);
+    ValueType autoOrganize = BoolValue(false);
 
     SDK::ContainerScreenController* controller = nullptr;
     std::chrono::steady_clock::time_point lastSeen {};
@@ -30,6 +32,7 @@ private:
 
     enum class Phase { Scan,
                        Steal,
+                       Organize,
                        Done };
     Phase phase = Phase::Scan;
 
@@ -40,6 +43,8 @@ private:
     int verifyCount = 0;
     int verifyAttempts = 0;
     bool exitRequested = false;
+    int stableScans = 0;
+    int totalMoves = 0;
 
     void resetSession();
     SDK::ItemStack* readSlot(const std::string& collection, int slot);
@@ -47,5 +52,7 @@ private:
     bool processAction(std::chrono::steady_clock::time_point now);
     bool buildPlan(std::chrono::steady_clock::time_point now);
     bool processSteal();
+    bool processOrganize();
+    bool tryMove(const std::string& srcColl, int srcIdx, const std::string& dstColl, int dstIdx);
     void finish();
 };

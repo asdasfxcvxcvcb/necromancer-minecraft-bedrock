@@ -1,6 +1,8 @@
 #include "pch.h"
 #include "BlockESP.h"
 #include "AntiObs.h"
+#include "client/misc/ItemCatalog.h"
+#include "client/event/events/LeaveGameEvent.h"
 #include "client/Necromancer.h"
 #include "client/misc/RenderFrameState.h"
 #include "client/event/events/RenderOverlayEvent.h"
@@ -47,6 +49,7 @@ BlockESP::BlockESP()
     Eventing::get().listen<RenderLevelEvent, &BlockESP::onRenderLevel>(this);
     Eventing::get().listen<RenderLayerEvent, &BlockESP::onRenderLayer>(this, 0, true);
     Eventing::get().listen<RenderOverlayEvent, &BlockESP::onRenderOverlay>(this);
+    Eventing::get().listen<LeaveGameEvent, &BlockESP::onLeaveGame>(this, 0, true);
 }
 
 void BlockESP::invalidateScan() {
@@ -83,15 +86,20 @@ void BlockESP::removeBlock(size_t index) {
 }
 
 void BlockESP::bindEntrySettings(BlockEntry& entry) {
-    auto cs = std::make_shared<Setting>("blockEspColor", LocalizeString::get("client.module.blockEsp.entryColor.name"),
+    std::wstring nameSuffix = entry.displayName.empty() ? util::StrToWStr(entry.id) : entry.displayName;
+
+    auto cs = std::make_shared<Setting>("blockEspColor/" + entry.id,
+                                        LocalizeString::get("client.module.blockEsp.entryColor.name").value() +
+                                            L" \x2014 " + nameSuffix,
                                         LocalizeString::get("client.module.blockEsp.entryColor.desc"));
     cs->value = &entry.color;
     cs->defaultValue = ColorValue(1.f, 0.25f, 0.25f, 1.f);
     cs->callback = [this](Setting&) { persist(); };
     entry.colorSetting = cs;
 
-    auto ts = std::make_shared<Setting>("blockEspThickness",
-                                        LocalizeString::get("client.module.blockEsp.entryThickness.name"),
+    auto ts = std::make_shared<Setting>("blockEspThickness/" + entry.id,
+                                        LocalizeString::get("client.module.blockEsp.entryThickness.name").value() +
+                                            L" \x2014 " + nameSuffix,
                                         LocalizeString::get("client.module.blockEsp.entryThickness.desc"));
     ts->value = &entry.thickness;
     ts->defaultValue = FloatValue(1.f);
@@ -102,7 +110,15 @@ void BlockESP::bindEntrySettings(BlockEntry& entry) {
     entry.thicknessSetting = ts;
 }
 
-void BlockESP::persist() {
+Setting* BlockESP::findEntrySetting(std::string const& name) {
+    for (auto& e : entries) {
+        if (e->colorSetting && e->colorSetting->name() == name) return e->colorSetting.get();
+        if (e->thicknessSetting && e->thicknessSetting->name() == name) return e->thicknessSetting.get();
+    }
+    return nullptr;
+}
+
+std::string BlockESP::serializedBlocks() const {
     auto arr = nlohmann::json::array();
     for (auto& e : entries) {
         nlohmann::json j = nlohmann::json::object();
@@ -114,7 +130,18 @@ void BlockESP::persist() {
         j["thickness"] = std::get<FloatValue>(e->thickness).value;
         arr.push_back(j);
     }
-    std::get<TextValue>(blockData).str = util::StrToWStr(arr.dump());
+    return arr.dump();
+}
+
+void BlockESP::persist() {
+    std::get<TextValue>(blockData).str = util::StrToWStr(serializedBlocks());
+}
+
+void BlockESP::onLeaveGame(Event&) {
+    catalog.clear();
+    iconDraws.clear();
+    invalidateScan();
+    ItemCatalog::get().invalidate();
 }
 
 void BlockESP::parseBlockData() {

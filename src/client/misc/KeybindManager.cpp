@@ -9,9 +9,11 @@
 #include "client/input/Keyboard.h"
 #include "client/config/ConfigManager.h"
 #include "client/feature/module/ModuleManager.h"
+#include "client/feature/module/modules/visual/BlockESP.h"
 #include "client/feature/setting/Setting.h"
 #include "client/localization/LocalizeString.h"
 #include <algorithm>
+#include <iomanip>
 
 namespace {
     bool equalsCI(std::string const& a, std::string const& b) {
@@ -26,7 +28,51 @@ namespace {
         if (a.is_number() && b.is_number()) {
             return std::abs(a.get<double>() - b.get<double>()) < 1e-4;
         }
+        if (a.is_object() && b.is_object()) {
+            if (a.size() != b.size()) return false;
+            for (auto it = a.begin(); it != a.end(); ++it) {
+                auto other = b.find(it.key());
+                if (other == b.end() || !jsonValuesEqual(it.value(), *other)) return false;
+            }
+            return true;
+        }
         return a == b;
+    }
+
+    bool applyColorJson(ColorValue& out, nlohmann::json const& value) {
+        if (!value.is_object() || !value.contains("color1") || !value["color1"].is_object()) return false;
+        auto& c1 = value["color1"];
+        if (!c1.contains("r") || !c1.contains("g") || !c1.contains("b") || !c1.contains("a")) return false;
+        if (!c1["r"].is_number() || !c1["g"].is_number() || !c1["b"].is_number() || !c1["a"].is_number()) return false;
+        out.color1.r = std::clamp(c1["r"].get<float>(), 0.f, 1.f);
+        out.color1.g = std::clamp(c1["g"].get<float>(), 0.f, 1.f);
+        out.color1.b = std::clamp(c1["b"].get<float>(), 0.f, 1.f);
+        out.color1.a = std::clamp(c1["a"].get<float>(), 0.f, 1.f);
+        if (value.contains("isRGB") && value["isRGB"].is_boolean()) out.isRGB = value["isRGB"].get<bool>();
+        if (value.contains("forceTagColor") && value["forceTagColor"].is_boolean()) {
+            out.forceTagColor = value["forceTagColor"].get<bool>();
+        }
+        return true;
+    }
+
+    Setting* findSettingForEdit(KeybindEdit const& edit) {
+        SettingGroup* group = nullptr;
+        if (edit.module == "global") {
+            group = &Necromancer::getSettings();
+        } else {
+            auto mod = Necromancer::getModuleManager().find(edit.module);
+            if (!mod) return nullptr;
+            group = mod->settings.get();
+            if (mod->name() == "BlockESP") {
+                if (auto* entrySet = std::static_pointer_cast<BlockESP>(mod)->findEntrySetting(edit.setting))
+                    return entrySet;
+            }
+        }
+        Setting* found = nullptr;
+        group->forEach([&](std::shared_ptr<Setting> set) {
+            if (!found && set->name() == edit.setting) found = set.get();
+        });
+        return found;
     }
 
     bool writeRawEditValue(Setting* set, nlohmann::json const& value) {
@@ -44,6 +90,12 @@ namespace {
             if (!value.is_number()) return false;
             std::get<EnumValue>(*set->value).val = value.get<int>();
             return true;
+        case (size_t)Setting::Type::Text:
+            if (!value.is_string()) return false;
+            std::get<TextValue>(*set->value).str = util::StrToWStr(value.get<std::string>());
+            return true;
+        case (size_t)Setting::Type::Color:
+            return applyColorJson(std::get<ColorValue>(*set->value), value);
         default:
             return false;
         }
@@ -249,42 +301,48 @@ void KeybindManager::removeEdit(std::string const& bindName, std::string const& 
 }
 
 Setting* KeybindManager::resolveEdit(KeybindEdit const& edit) {
-    SettingGroup* group = nullptr;
-    if (edit.module == "global") {
-        group = &Necromancer::getSettings();
-    } else {
-        auto mod = Necromancer::getModuleManager().find(edit.module);
-        if (!mod) return nullptr;
-        group = mod->settings.get();
-    }
-    Setting* found = nullptr;
-    group->forEach([&](std::shared_ptr<Setting> set) {
-        if (!found && set->name() == edit.setting) found = set.get();
+    return findSettingForEdit(edit);
+}
+
+std::string KeybindManager::settingOwnerModule(Setting* set) {
+    if (!set) return "";
+    bool isGlobal = false;
+    Necromancer::getSettings().forEach([&](std::shared_ptr<Setting> s) {
+        if (s.get() == set) isGlobal = true;
     });
-    return found;
+    if (isGlobal) return "global";
+
+    std::string owner;
+    Necromancer::getModuleManager().forEach([&](std::shared_ptr<Module> mod) {
+        if (!owner.empty() || !mod->settings) return;
+        if (mod->name() == "BlockESP") {
+            if (std::static_pointer_cast<BlockESP>(mod)->findEntrySetting(set->name()) == set) {
+                owner = mod->name();
+                return;
+            }
+        }
+        bool found = false;
+        mod->settings->forEach([&](std::shared_ptr<Setting> s) {
+            if (!found && s.get() == set) found = true;
+        });
+        if (found) owner = mod->name();
+    });
+    return owner;
 }
 
 std::wstring KeybindManager::describeEdit(KeybindEdit const& edit) {
     std::wstring moduleName = util::StrToWStr(edit.module);
     std::wstring settingName = util::StrToWStr(edit.setting);
-    SettingGroup* group = nullptr;
     if (edit.module == "global") {
-        group = &Necromancer::getSettings();
         moduleName = LocalizeString::get("client.ui.clickGui.keybinds.global.name").value();
     } else if (auto mod = Necromancer::getModuleManager().find(edit.module)) {
         moduleName = mod->getDisplayName();
-        group = mod->settings.get();
     }
 
-    Setting* set = nullptr;
-    if (group) {
-        group->forEach([&](std::shared_ptr<Setting> s) {
-            if (!set && s->name() == edit.setting) set = s.get();
-        });
-    }
+    Setting* set = findSettingForEdit(edit);
+    if (set) settingName = set->getDisplayName();
 
     std::wstring valueText = L"?";
-    if (set) settingName = set->getDisplayName();
     switch (edit.valueType) {
     case (size_t)Setting::Type::Bool:
         if (edit.value.is_boolean()) {
@@ -306,6 +364,27 @@ std::wstring KeybindManager::describeEdit(KeybindEdit const& edit) {
             auto* entries = set && set->enumData ? set->enumData->getEntries() : nullptr;
             if (entries && idx >= 0 && idx < static_cast<int>(entries->size())) valueText = entries->at(idx).name();
             else valueText = std::to_wstring(idx);
+        }
+        break;
+    case (size_t)Setting::Type::Text:
+        if (edit.value.is_string()) {
+            std::wstring text = util::StrToWStr(edit.value.get<std::string>());
+            if (text.size() > 24) text = text.substr(0, 24) + L"\x2026";
+            valueText = text;
+        }
+        break;
+    case (size_t)Setting::Type::Color:
+        if (edit.value.is_object() && edit.value.contains("color1") && edit.value["color1"].is_object()) {
+            auto& c1 = edit.value["color1"];
+            if (c1.contains("r") && c1.contains("g") && c1.contains("b") && c1["r"].is_number() &&
+                c1["g"].is_number() && c1["b"].is_number()) {
+                std::wstringstream ss;
+                ss << std::hex << std::setfill(L'0') << std::setw(2)
+                   << static_cast<int>(std::clamp(c1["r"].get<float>(), 0.f, 1.f) * 255.f + 0.5f);
+                ss << std::setw(2) << static_cast<int>(std::clamp(c1["g"].get<float>(), 0.f, 1.f) * 255.f + 0.5f);
+                ss << std::setw(2) << static_cast<int>(std::clamp(c1["b"].get<float>(), 0.f, 1.f) * 255.f + 0.5f);
+                valueText = L"#" + ss.str();
+            }
         }
         break;
     default:
@@ -360,6 +439,28 @@ bool KeybindManager::applyEdit(KeybindEdit const& edit, nlohmann::json const& va
         set->userUpdate();
         return true;
     }
+    case (size_t)Setting::Type::Text: {
+        if (!value.is_string()) return false;
+        auto& v = std::get<TextValue>(*set->value);
+        if (outPrevious) v.store(*outPrevious);
+        v.str = util::StrToWStr(value.get<std::string>());
+        if (outEffective) v.store(*outEffective);
+        set->update();
+        set->userUpdate();
+        return true;
+    }
+    case (size_t)Setting::Type::Color: {
+        auto& v = std::get<ColorValue>(*set->value);
+        if (outPrevious) v.store(*outPrevious);
+        if (!applyColorJson(v, value)) {
+            if (outPrevious) outPrevious->clear();
+            return false;
+        }
+        if (outEffective) v.store(*outEffective);
+        set->update();
+        set->userUpdate();
+        return true;
+    }
     default:
         return false;
     }
@@ -377,6 +478,12 @@ bool KeybindManager::readEditCurrent(KeybindEdit const& edit, nlohmann::json& ou
         return true;
     case (size_t)Setting::Type::Enum:
         out = std::get<EnumValue>(*set->value).val;
+        return true;
+    case (size_t)Setting::Type::Text:
+        std::get<TextValue>(*set->value).store(out);
+        return true;
+    case (size_t)Setting::Type::Color:
+        std::get<ColorValue>(*set->value).store(out);
         return true;
     default:
         return false;

@@ -11,6 +11,9 @@ namespace {
     std::shared_ptr<Hook> SendToServerHook;
     std::shared_ptr<Hook> CreatePacketHook;
 
+    void* lastNetworkIdentifier = nullptr;
+    void* lastNetEventCallback = nullptr;
+
     constexpr size_t PacketHookArraySize =
         static_cast<size_t>(std::numeric_limits<std::underlying_type_t<SDK::PacketID>>::max()) + 1;
 
@@ -37,6 +40,11 @@ std::shared_ptr<SDK::Packet> PacketHooks::MinecraftPackets_createPacket(SDK::Pac
 void PacketHooks::PacketHandlerDispatcherInstance_handle(void* instance, void* networkIdentifier,
                                                          void* netEventCallback, std::shared_ptr<SDK::Packet>& packet) {
     if (!packet) return;
+
+    if (instance && networkIdentifier && netEventCallback) {
+        lastNetworkIdentifier = networkIdentifier;
+        lastNetEventCallback = netEventCallback;
+    }
 
     auto packetId = packet->getID();
     auto hook = PacketHookArray[static_cast<size_t>(static_cast<std::underlying_type_t<SDK::PacketID>>(packetId))];
@@ -98,4 +106,21 @@ void PacketHooks::initPacketSender(SDK::PacketSender* sender) {
     uintptr_t* vtable = *reinterpret_cast<uintptr_t**>(sender);
     SendToServerHook =
         addTableSwapHook((uintptr_t)(vtable + 2), PacketSender_sendToServer, "PacketSender::sendToServer");
+}
+
+bool PacketHooks::injectReceived(std::shared_ptr<SDK::Packet>& packet) {
+    if (!packet || !packet->handler) return false;
+    if (!lastNetworkIdentifier || !lastNetEventCallback) return false;
+    if (!Necromancer::isMainThread()) return false;
+
+    auto dispatcher = reinterpret_cast<void*>(packet->handler);
+    auto vft = *reinterpret_cast<uintptr_t***>(packet->handler);
+    if (!vft) return false;
+
+    auto hookIt = PacketHooksByVtableSlot.find(reinterpret_cast<uintptr_t>(vft + 1));
+    if (hookIt == PacketHooksByVtableSlot.end() || !hookIt->second) return false;
+
+    hookIt->second->oFunc<decltype(&PacketHandlerDispatcherInstance_handle)>()(dispatcher, lastNetworkIdentifier,
+                                                                               lastNetEventCallback, packet);
+    return true;
 }

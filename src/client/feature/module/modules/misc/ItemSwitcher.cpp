@@ -33,6 +33,11 @@ void ItemSwitcher::onEnable() {
     hasSwitched = false;
 }
 
+void ItemSwitcher::setTargetItem(std::string const& id) {
+    std::get<TextValue>(targetItem).str = util::StrToWStr(id);
+    hasSwitched = false;
+}
+
 void ItemSwitcher::onTick(Event&) {
     auto ci = SDK::ClientInstance::get();
     auto plr = ci ? ci->getLocalPlayer() : nullptr;
@@ -52,8 +57,7 @@ void ItemSwitcher::onTick(Event&) {
     auto* held = inv->getItem(sel);
     if (held && held->getItem()) {
         std::string heldId = held->getItem()->namespacedId.getString();
-        std::wstring heldWide(heldId.begin(), heldId.end());
-        if (heldWide == target) {
+        if (util::StrToWStr(heldId) == target) {
             if (once) hasSwitched = true;
             return;
         }
@@ -64,8 +68,7 @@ void ItemSwitcher::onTick(Event&) {
         auto* stack = inv->getItem(i);
         if (!stack || !stack->getItem()) continue;
         std::string stackId = stack->getItem()->namespacedId.getString();
-        std::wstring stackWide(stackId.begin(), stackId.end());
-        if (stackWide == target) {
+        if (util::StrToWStr(stackId) == target) {
             plr->supplies->selectedSlot = i;
             if (once) hasSwitched = true;
             return;

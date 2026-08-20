@@ -116,14 +116,14 @@ namespace {
         }
     }
 
-    int sehCallTakePlace(uintptr_t fn, void* mgr, const void* from, int count, const void* to, unsigned long& exCode,
+    int sehCallTakePlace(void* mgr, int idx, const void* dst, int count, const void* src, unsigned long& exCode,
                          uintptr_t& exAddr) {
         __try {
             using Fn = int(__fastcall*)(void*, const void*, int, const void*);
-            return reinterpret_cast<Fn>(fn)(mgr, from, count, to);
-        } __except (exCode = GetExceptionCode(),
-                    exAddr = reinterpret_cast<uintptr_t>((GetExceptionInformation())->ExceptionRecord->ExceptionAddress),
-                    EXCEPTION_EXECUTE_HANDLER) {
+            auto vtable = *reinterpret_cast<Fn**>(mgr);
+            exAddr = reinterpret_cast<uintptr_t>(vtable[idx]);
+            return vtable[idx](mgr, dst, count, src);
+        } __except (exCode = GetExceptionCode(), EXCEPTION_EXECUTE_HANDLER) {
             return -1;
         }
     }
@@ -203,11 +203,6 @@ void SDK::ContainerScreenController::autoPlaceSlot(const std::string& collection
 
 int SDK::ContainerScreenController::transferSlot(const std::string& srcColl, int srcSlot, const std::string& dstColl,
                                                  int dstSlot) {
-    uintptr_t fn = Signatures::ContainerManagerModel_takePlace.result;
-    if (!fn) {
-        Logger::Warn("[ChestStealer] transferSlot: takePlace signature not resolved");
-        return 0;
-    }
     auto mgr = this->containerManager;
     if (!mgr) return 0;
     uintptr_t buckets = 0;
@@ -218,7 +213,8 @@ int SDK::ContainerScreenController::transferSlot(const std::string& srcColl, int
 
     unsigned long exCode = 0;
     uintptr_t exAddr = 0;
-    int moved = sehCallTakePlace(fn, mgr, &from, 0x7FFFFFFF, &to, exCode, exAddr);
+    int moved = sehCallTakePlace(mgr, Signatures::VtableIndex::ContainerManagerModel::takePlace, &to, 0x7FFFFFFF,
+                                 &from, exCode, exAddr);
 
     if (moved < 0) {
         Logger::Warn("[ChestStealer] transferSlot faulted for {}[{}] -> {}[{}] (exCode={:X} exAddr={:X})", srcColl,

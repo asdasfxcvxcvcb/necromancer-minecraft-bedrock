@@ -40,11 +40,13 @@ public:
     void onRenderLevel(RenderLevelEvent& event);
     void onRenderLayer(RenderLayerEvent& event);
     void onRenderOverlay(class Event& event);
+    void onLeaveGame(class Event& event);
 
     [[nodiscard]] std::vector<std::shared_ptr<BlockEntry>>& getEntries() { return entries; }
     [[nodiscard]] bool hasBlock(std::string const& id) const;
     void addBlock(CatalogEntry const& cat);
     void removeBlock(size_t index);
+    [[nodiscard]] class Setting* findEntrySetting(std::string const& name);
 
     std::vector<CatalogEntry> const& getCatalog();
     void rebuildCatalog();
@@ -54,6 +56,7 @@ public:
     void clearIconDraws() { iconDraws.clear(); }
 
     void persist();
+    [[nodiscard]] std::string serializedBlocks() const;
 
 private:
     void parseBlockData();

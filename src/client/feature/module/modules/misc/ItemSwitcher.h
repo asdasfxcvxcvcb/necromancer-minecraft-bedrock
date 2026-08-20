@@ -8,6 +8,8 @@ public:
     void onEnable() override;
     void onTick(Event& evG);
 
+    void setTargetItem(std::string const& id);
+
     ValueType targetItem = TextValue(L"");
 
 private:

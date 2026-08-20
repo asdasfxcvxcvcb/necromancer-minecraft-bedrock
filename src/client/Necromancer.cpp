@@ -464,7 +464,6 @@ DWORD __stdcall startThreadImpl(HINSTANCE dll) {
         MVSIG(ContainerScreenController_handleAutoPlace),
         MVSIG(ContainerScreenController_handleTakePlace),
         MVSIG(ContainerManagerModel_autoPlace),
-        MVSIG(ContainerManagerModel_takePlace),
         MVSIG(ItemStackNetManagerClient_addRequestAction),
         MVSIG(ItemStackNetManagerClient_beginRequest),
         MVSIG(ItemStackNetManagerClient_endRequest),

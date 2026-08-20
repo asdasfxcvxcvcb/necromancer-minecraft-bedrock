@@ -4,6 +4,7 @@
 #include "client/screen/TextBox.h"
 #include "client/config/ConfigManager.h"
 #include "client/localization/LocalizeString.h"
+#include <nlohmann/json.hpp>
 #include <memory>
 #include <array>
 #include <map>
@@ -69,6 +70,8 @@ private:
     void closeBlockPicker();
     void drawItemSwitcher(class D2DUtil& dc);
     void closeItemSwitcher();
+    void recordPickerEdit(class Setting* set, size_t valueType, nlohmann::json value);
+    void recordBlockListEdit(class BlockESP* mod);
     void refreshConfigList();
     bool hasSelectedSettingBox() const;
     void clearSettingBoxFocus();
@@ -127,9 +130,11 @@ private:
         float lerpScroll = 0.f;
         float scrollMax = 0.f;
         bool queueClose = false;
+        bool justOpened = false;
     } itemSwitcherPicker {};
     TextBox itemSwitcherSearchBox { {}, 48 };
     bool itemSwitcherSearchRegistered = false;
+    d2d::Rect iPickerRect = {};
 
     TextBox searchTextBox {};
     TextBox configNameTextBox { {}, 64 };

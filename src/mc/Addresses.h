@@ -199,6 +199,7 @@ public:
 
         struct ContainerManagerModel {
             inline static constexpr size_t autoPlace = 0xF;
+            inline static constexpr size_t takePlace = 0x9;
         };
     };
 
@@ -561,14 +562,6 @@ public:
         },
         "55 41 56 56 57 53 48 81 EC ? ? ? ? 48 8D AC 24 ? ? ? ? 48 C7 45 ? ? ? ? ? 48 89 CE 48 83 B9 ? ? ? ? ? 0F 84"_sig,
         "ContainerManagerModel::autoPlace"
-    };
-
-    inline static SigImpl ContainerManagerModel_takePlace {
-        [](memory::signature_store&, uintptr_t res) {
-            return res;
-        },
-        "55 41 57 41 56 56 57 53 48 81 EC A8 00 00 00 48 8D AC 24 ? ? ? ? 48 C7 45 ? ? ? ? ? 44 89 C6"_sig,
-        "ContainerManagerModel::takePlace"
     };
 
     inline static SigImpl ItemStackNetManagerClient_addRequestAction {

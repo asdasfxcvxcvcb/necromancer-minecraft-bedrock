@@ -31,6 +31,7 @@
 #include "modules/game/AfterTrack.h"
 #include "modules/game/Velocity.h"
 #include "modules/game/AntiAFK.h"
+#include "modules/game/GameTimer.h"
 
 #include "modules/visual/Fullbright.h"
 #include "modules/visual/HurtColor.h"
@@ -108,6 +109,7 @@ ModuleManager::ModuleManager() {
     this->items.push_back(std::make_shared<AfterTrack>());
     this->items.push_back(std::make_shared<Velocity>());
     this->items.push_back(std::make_shared<AntiAFK>());
+    this->items.push_back(std::make_shared<GameTimer>());
     this->items.push_back(std::make_shared<ESP>());
     this->items.push_back(std::make_shared<OutOfViewArrows>());
     this->items.push_back(std::make_shared<AntiObs>());

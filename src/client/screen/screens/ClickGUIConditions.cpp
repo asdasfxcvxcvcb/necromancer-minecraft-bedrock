@@ -385,11 +385,11 @@ void ClickGUI::drawCondCanvas(D2DUtil& dc, bool rtl) {
     }
 
     float bpad   = condBoardRect.getWidth() * 0.03f;
-    float rowH   = rect.getHeight() * 0.058f;
+    float rowH   = rect.getHeight() * 0.064f;
     float armW   = rowH * 0.42f;
     float gap    = rowH * 0.06f;
-    float textSz = rowH * 0.42f;
-    float addH   = rowH * 0.78f;
+    float textSz = rowH * 0.47f;
+    float addH   = rowH * 0.86f;
 
     ScratchMetrics metrics {
         rowH * 0.55f,   // notchX  (offset from left where notch starts)
@@ -524,6 +524,8 @@ void ClickGUI::drawCondCanvas(D2DUtil& dc, bool rtl) {
     }
 
     if (graph.empty() || visibleTopLevels.empty()) {
+        condCanvas.boardScroll = 0.f;
+        condCanvas.boardScrollMax = 0.f;
         dc.drawAutoFitted(condBoardRect,
                                 isDragging ? L"drop to place" : L"Grab a block from the panel \u2192",
                                 d2d::Color(1.f, 1.f, 1.f, 0.28f), FontSelection::PrimaryLight,
@@ -546,7 +548,6 @@ void ClickGUI::drawCondCanvas(D2DUtil& dc, bool rtl) {
         condCanvas.boardScrollMax = std::max(0.f, totalH - condBoardRect.getHeight() + bpad * 2.f);
         condCanvas.boardScroll = std::clamp(condCanvas.boardScroll, 0.f, condCanvas.boardScrollMax);
     }
-
     // resolve which slot the drag is hovering, then show the insert marker
     condCanvas.dropValid = false;
     condCanvas.dropParent = 0;
@@ -764,17 +765,17 @@ void ClickGUI::drawCondPalette(D2DUtil& dc, Keybind& bind, ConditionGraph& graph
                             DrawUtil::OutlinePosition::Inside);
 
     float pad = condPaletteRect.getWidth() * 0.06f;
-    float rowH = rect.getHeight() * 0.052f;
+    float rowH = rect.getHeight() * 0.058f;
     float rowGap = rowH * 0.16f;
 
     d2d::Rect header { condPaletteRect.left + pad, condPaletteRect.top + pad, condPaletteRect.right - pad,
                        condPaletteRect.top + pad + rowH * 0.8f };
     dc.drawAutoFitted(header, LocalizeString::get("client.ui.clickGui.keybinds.cond.palette.name"),
-                            d2d::Color(1.f, 1.f, 1.f, 0.65f), FontSelection::PrimaryRegular, rowH * 0.5f,
+                            d2d::Color(1.f, 1.f, 1.f, 0.65f), FontSelection::PrimaryRegular, rowH * 0.55f,
                             DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
     auto* selected = condCanvas.selectedNode != 0 ? graph.find(condCanvas.selectedNode) : nullptr;
-    float inspectorH = selected ? rowH * 6.2f : 0.f;
+    float inspectorH = selected ? rowH * 7.4f : 0.f;
     float listBottom = condPaletteRect.bottom - pad - inspectorH;
 
     d2d::Rect listArea { condPaletteRect.left + pad, header.bottom + rowGap, condPaletteRect.right - pad, listBottom };
@@ -796,7 +797,7 @@ void ClickGUI::drawCondPalette(D2DUtil& dc, Keybind& bind, ConditionGraph& graph
             auto col = kindColor(kind);
             dc.fillRoundedRectangle(rowRc, col.asAlpha(hovered ? 0.92f : 0.62f), rowH * 0.26f);
             dc.drawAutoFitted({ rowRc.left + pad * 0.5f, rowRc.top, rowRc.right - pad * 0.5f, rowRc.bottom },
-                                    kindLabel(kind), d2d::Colors::WHITE, FontSelection::PrimaryRegular, rowH * 0.52f,
+                                    kindLabel(kind), d2d::Colors::WHITE, FontSelection::PrimaryRegular, rowH * 0.56f,
                                     DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
             if (hovered) {
@@ -825,7 +826,7 @@ void ClickGUI::drawCondPalette(D2DUtil& dc, Keybind& bind, ConditionGraph& graph
     dc.fillRoundedRectangle(inspector, d2d::Color::RGB(0x22, 0x22, 0x22).asAlpha(0.92f), rowH * 0.24f);
 
     float iy = inspector.top + rowGap * 0.8f;
-    float ctrlH = rowH * 0.92f;
+    float ctrlH = rowH * 1.08f;
     auto lineRect = [&](float height) {
         d2d::Rect rc { inspector.left + pad * 0.5f, iy, inspector.right - pad * 0.5f, iy + height };
         iy += height + rowGap * 0.5f;
@@ -1354,6 +1355,7 @@ void ClickGUI::drawCondItemPicker(D2DUtil& dc) {
 
     if (picked) {
         condCanvas.itemPickerNode = 0;
+        condCanvas.itemPickerJustOpened = false;
         condItemSearchBox.setSelected(false);
         return;
     }
