@@ -59,6 +59,8 @@ private:
 
     std::chrono::steady_clock::time_point nextAttack = std::chrono::steady_clock::now();
     std::chrono::steady_clock::time_point lastJumpTime = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+    std::chrono::steady_clock::time_point criticalWaitUntil {};
+    bool criticalWaitActive = false;
     bool wasOnGround = true;
     // Height of the last accepted hit, for the no-repeat rule.
     uint64_t lastHitTarget = 0;

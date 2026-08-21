@@ -186,9 +186,10 @@ Backtrack::Backtrack()
                LocalizeString::get("client.module.backtrack.freezeBacktrack.desc"), freezeBacktrack);
     addSetting("invalidateAirborne", LocalizeString::get("client.module.backtrack.invalidateAirborne.name"),
                LocalizeString::get("client.module.backtrack.invalidateAirborne.desc"), invalidateAirborne);
-    addSliderSetting("ghostCount", LocalizeString::get("client.module.backtrack.ghostCount.name"),
+    auto ghostCountSet = addSliderSetting("ghostCount", LocalizeString::get("client.module.backtrack.ghostCount.name"),
                      LocalizeString::get("client.module.backtrack.ghostCount.desc"), ghostCount, FloatValue(1.f),
                      FloatValue(12.f), FloatValue(1.f), "onlyLastRecord"_isfalse);
+    ghostCountSet->floatEditMax = static_cast<float>(maxSamples);
     addSetting("hitbox", LocalizeString::get("client.module.backtrack.hitbox.name"),
                LocalizeString::get("client.module.backtrack.hitbox.desc"), hitbox);
     addSetting("hitboxColor", LocalizeString::get("client.module.backtrack.hitboxColor.name"),
@@ -352,6 +353,10 @@ void Backtrack::processAirClick() {
     if (now - clickPendingAt < std::chrono::milliseconds(60)) return;
     hasClickPending = false;
     if (lastAttackEventAt >= clickPendingAt) {
+        // The vanilla attack already fired for this click, so onSendPacket handles the
+        // redirect using the record resolved at click time. Leave preparedGhostAttack
+        // alone -- clearing it here would throw away the very thing that makes a manual
+        // click land on the record the user aimed at. It expires on its own.
         BT_LOG("[BT] airclick SKIP: vanilla AttackEvent already fired for this click");
         return;
     }
@@ -571,6 +576,37 @@ void Backtrack::onClick(Event& evG) {
     if (hasClickPending) return;
     hasClickPending = true;
     clickPendingAt = now;
+
+    // Resolve which record was under the crosshair NOW, while the camera is still
+    // where the user aimed. processAirClick used to do this 60ms later, by which point
+    // the view had moved and the records had rolled forward ~3 samples, so it often
+    // resolved a different record than the one clicked -- or none, and the hit fell
+    // through to the live model. Triggerbot never had this problem because it declares
+    // the exact record up front; this gives a manual click the same guarantee.
+    //
+    // Safe to raycast here: left clicks arrive through GameCore::handleMouseInput, which
+    // runs on the game thread, the same one processAirClick and onUpdate run on.
+    //
+    // A live prepared attack is never overwritten. Triggerbot calls prepareGhostAttack
+    // and *then* pushes its click, so that click lands here with its record already
+    // declared -- re-resolving would replace a deliberately chosen record with whatever
+    // the crosshair happens to cross.
+    if (preparedGhostAttack.active) {
+        if (now < preparedGhostAttack.expiresAt) return;
+        preparedGhostAttack = {};
+    }
+
+    Vec3 clickGhost {};
+    AABB clickBox {};
+    Vec3 clickHit {};
+    if (auto* clicked = pickStaleTarget(legitReach, &clickGhost, &clickBox, &clickHit)) {
+        preparedGhostAttack.runtimeID = clicked->getRuntimeID();
+        preparedGhostAttack.box = clickBox;
+        preparedGhostAttack.hitPoint = clickHit;
+        preparedGhostAttack.ageMs = std::clamp(aimedGhostAge, 0.f, static_cast<float>(maxRecordMs));
+        preparedGhostAttack.expiresAt = now + std::chrono::milliseconds(200);
+        preparedGhostAttack.active = true;
+    }
 }
 
 void Backtrack::onKey(Event& evG) {
@@ -1109,7 +1145,12 @@ void Backtrack::buildGhostAges(std::vector<float>& out, uint64_t runtimeID) {
         return;
     }
 
-    int count = static_cast<int>(std::clamp(std::get<FloatValue>(ghostCount).value, 1.f, 12.f));
+    // The slider stops at 12 because that is the useful range, but a typed value is
+    // honoured up to the number of records the buffer can actually hold. Clamping to
+    // the slider max here silently ignored anything the user typed above it.
+    int maxGhosts = static_cast<int>(maxSamples);
+    int count = static_cast<int>(std::clamp(std::get<FloatValue>(ghostCount).value, 1.f,
+                                            static_cast<float>(maxGhosts)));
     if (count <= 1 || maxAge <= 0.f) {
         out.push_back(maxAge);
         return;

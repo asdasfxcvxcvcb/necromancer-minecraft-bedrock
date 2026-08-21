@@ -208,6 +208,8 @@ void Triggerbot::afterLoadConfig() {
 
 void Triggerbot::onDisable() {
     nextAttack = std::chrono::steady_clock::now();
+    criticalWaitUntil = {};
+    criticalWaitActive = false;
     wasOnGround = true;
     hasLastHit = false;
     lastHitTarget = 0;
@@ -477,6 +479,15 @@ void Triggerbot::onUpdate(Event&) {
     if (wasOnGround && !onGround) lastJumpTime = now;
     wasOnGround = onGround;
 
+    bool criticalWindow = std::get<BoolValue>(criticalOnly) && !onGround && lp->getVelocity().y < 0.f;
+    if (!criticalWindow) {
+        criticalWaitActive = false;
+        criticalWaitUntil = {};
+    } else if (!criticalWaitActive) {
+        criticalWaitActive = true;
+        criticalWaitUntil = now + std::chrono::milliseconds(50);
+    }
+
     auto target = pickTarget(std::get<FloatValue>(range).value);
     if (!target.actor || !canFire(target.actor)) {
         nextAttack = now;
@@ -531,6 +542,7 @@ void Triggerbot::onUpdate(Event&) {
     };
 
     if (now < nextAttack || pendingAttack.active) return;
+    if (criticalWindow && now < criticalWaitUntil) return;
 
     if (useMouse) {
         if (target.record == TargetRecord::Backtrack) {

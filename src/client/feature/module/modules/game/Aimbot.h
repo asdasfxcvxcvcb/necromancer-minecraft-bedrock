@@ -33,7 +33,6 @@ private:
     ValueType wallCheck = BoolValue(true);
     ValueType hitBehindWall = BoolValue(false);
     ValueType backtrackTarget = BoolValue(false);
-    ValueType aimDrift = FloatValue(0.f);
 
     ValueType smoothSpeed = FloatValue(8.f);
     ValueType lockOn = BoolValue(false);
@@ -70,7 +69,6 @@ private:
     Vec3 desiredAimFrac { 0.5f, 0.55f, 0.5f };
     bool desiredIsGhost = false;
     AABB desiredGhostBox {};
-    bool desiredDriftReset = false;
     bool commandActive = false;
     Vec2 commandedRot {};
     Vec2 pendingTurnDelta {};
@@ -80,9 +78,6 @@ private:
     std::atomic_bool injectingTurn = false;
     std::recursive_mutex controllerMutex;
     std::mutex aimMutex;
-    float driftPhase = 0.55f;
-    int driftDir = 1;
-    std::chrono::steady_clock::time_point lastDriftTick {};
     class Backtrack* backtrackModule = nullptr;
     bool backtrackResolved = false;
     ComPtr<ID2D1SolidColorBrush> ringBrush;

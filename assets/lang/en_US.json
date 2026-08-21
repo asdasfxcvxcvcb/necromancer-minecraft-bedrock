@@ -223,8 +223,6 @@
         "client.module.aimbot.targetMode.lowestHealth.desc": "Target the entity with the lowest raw health.",
         "client.module.aimbot.targetMode.lowestHealth.name": "Lowest Health",
         "client.module.aimbot.targetMode.name": "Targeting",
-        "client.module.aimbot.aimDrift.desc": "Slowly sweeps the aim point up and down the ghost box instead of holding one spot. Needed on servers that reject a second hit at the same height. Measured in blocks per second; 0 turns it off.",
-        "client.module.aimbot.aimDrift.name": "Aim Drift",
         "client.module.aimbot.backtrackTarget.desc": "Aim at the Backtrack ghost box instead of where the player actually is. Requires the Backtrack module to be on.",
         "client.module.aimbot.backtrackTarget.name": "Backtrack Target",
         "client.module.aimbot.hitBehindWall.desc": "Aim through blocks and redirect blocked left clicks to the selected target with a direct attack.",

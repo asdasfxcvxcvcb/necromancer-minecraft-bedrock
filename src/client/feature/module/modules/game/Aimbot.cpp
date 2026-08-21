@@ -92,9 +92,6 @@ namespace {
 
     constexpr float lateralBias = 0.35f;
 
-    constexpr float driftLowBound = 0.05f;
-    constexpr float driftHighBound = 0.72f;
-
     constexpr float surfaceInset = 0.05f;
 
     constexpr float snapSpeedThreshold = 90.f;
@@ -173,13 +170,6 @@ Aimbot::Aimbot()
 
     addSetting("backtrackTarget", LocalizeString::get("client.module.aimbot.backtrackTarget.name"),
                LocalizeString::get("client.module.aimbot.backtrackTarget.desc"), backtrackTarget, "players"_istrue);
-    addSliderSetting("aimDrift", LocalizeString::get("client.module.aimbot.aimDrift.name"),
-                     LocalizeString::get("client.module.aimbot.aimDrift.desc"), aimDrift, FloatValue(0.f),
-                     FloatValue(1.f), FloatValue(0.01f),
-                     Setting::Condition(std::vector<Setting::SingleCond> {
-                         { "players", { 1 }, false },
-                         { "backtrackTarget", { 1 }, false },
-                     }));
 
     addSliderSetting("smoothSpeed", LocalizeString::get("client.module.aimbot.smoothSpeed.name"),
                      LocalizeString::get("client.module.aimbot.smoothSpeed.desc"), smoothSpeed, FloatValue(0.5f),
@@ -272,12 +262,9 @@ void Aimbot::onDisable() {
     userInput.store(0.f, std::memory_order_release);
     lastFrame = {};
     lastCorrectionFrame = UINT64_MAX;
-    lastDriftTick = {};
-    driftDir = 1;
     candidates.clear();
     std::lock_guard lock { aimMutex };
     desiredTargetId = 0;
-    desiredDriftReset = false;
 }
 
 void Aimbot::onUpdate(Event&) {
@@ -467,7 +454,6 @@ void Aimbot::onUpdate(Event&) {
     uint64_t targetId = target->getRuntimeID();
     {
         std::lock_guard lock { aimMutex };
-        if (targetId != currentTargetId || targetIsGhost != currentTargetGhost) desiredDriftReset = true;
         desiredTargetId = targetId;
         desiredAimFrac = resolvedFrac;
         desiredIsGhost = targetIsGhost;
@@ -498,17 +484,13 @@ void Aimbot::onCameraUpdate(Event&) {
     Vec3 aimFrac;
     bool wantGhost;
     AABB selectedGhost {};
-    bool driftReset;
     {
         std::lock_guard lock { aimMutex };
         targetId = desiredTargetId;
         aimFrac = desiredAimFrac;
         wantGhost = desiredIsGhost;
         selectedGhost = desiredGhostBox;
-        driftReset = desiredDriftReset;
-        desiredDriftReset = false;
     }
-    if (driftReset) lastDriftTick = {};
     if (targetId == 0) {
         commandActive = false;
             lastFrame = {};
@@ -553,31 +535,6 @@ void Aimbot::onCameraUpdate(Event&) {
         std::lerp(localOld.z, localPos.z, partialTick),
     };
     Vec3 eye = poseAwareEye(lp, interpolatedLocalPos);
-
-    float driftStep = usingGhost ? std::clamp(std::get<FloatValue>(aimDrift).value, 0.f, 1.f) : 0.f;
-    if (driftStep > 0.f) {
-        auto driftNow = std::chrono::steady_clock::now();
-        if (lastDriftTick == std::chrono::steady_clock::time_point {}) {
-            driftPhase = aimFrac.y;
-            driftDir = 1;
-            lastDriftTick = driftNow;
-        } else if (driftNow - lastDriftTick >= std::chrono::seconds(1)) {
-            lastDriftTick = driftNow;
-            float height = std::max(bounds.higher.y - bounds.lower.y, 0.1f);
-            float stepFrac = driftStep / height;
-            driftPhase += static_cast<float>(driftDir) * stepFrac;
-            if (driftPhase >= driftHighBound) {
-                driftPhase = driftHighBound;
-                driftDir = -1;
-            } else if (driftPhase <= driftLowBound) {
-                driftPhase = driftLowBound;
-                driftDir = 1;
-            }
-        }
-        aimFrac.y = driftPhase;
-    } else {
-        lastDriftTick = {};
-    }
 
     Vec3 aimPoint = boxPoint(bounds, aimFrac);
     Vec3 direction = aimPoint - eye;
