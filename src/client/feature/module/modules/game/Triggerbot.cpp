@@ -182,20 +182,6 @@ Triggerbot::Triggerbot()
 
     addSetting("backtrackTarget", LocalizeString::get("client.module.triggerbot.backtrackTarget.name"),
                LocalizeString::get("client.module.triggerbot.backtrackTarget.desc"), backtrackTarget, "players"_istrue);
-    addSetting("noRepeatPoint", LocalizeString::get("client.module.triggerbot.noRepeatPoint.name"),
-               LocalizeString::get("client.module.triggerbot.noRepeatPoint.desc"), noRepeatPoint,
-               Setting::Condition(std::vector<Setting::SingleCond> {
-                   { "players", { 1 }, false },
-                   { "backtrackTarget", { 1 }, false },
-               }));
-    addSliderSetting("pointGap", LocalizeString::get("client.module.triggerbot.pointGap.name"),
-                     LocalizeString::get("client.module.triggerbot.pointGap.desc"), pointGap, FloatValue(0.05f),
-                     FloatValue(1.f), FloatValue(0.05f),
-                     Setting::Condition(std::vector<Setting::SingleCond> {
-                         { "players", { 1 }, false },
-                         { "backtrackTarget", { 1 }, false },
-                         { "noRepeatPoint", { 1 }, false },
-                     }));
 
     this->listen<UpdateEvent>(&Triggerbot::onUpdate);
     this->listen<AfterMoveEvent>(&Triggerbot::onAfterMove);
@@ -211,8 +197,6 @@ void Triggerbot::onDisable() {
     criticalWaitUntil = {};
     criticalWaitActive = false;
     wasOnGround = true;
-    hasLastHit = false;
-    lastHitTarget = 0;
     pendingAttack = {};
 }
 
@@ -232,26 +216,6 @@ AfterTrack* Triggerbot::resolveAfterTrack() {
         afterTrackResolved = true;
     }
     return afterTrackModule;
-}
-
-bool Triggerbot::currentAimHeight(TargetSelection const& target, float& outY) {
-    auto ci = SDK::ClientInstance::get();
-    if (!ci || !ci->minecraft || !target.actor) return false;
-    auto level = ci->minecraft->getLevel();
-    if (!level) return false;
-    auto hit = level->getHitResult();
-    if (!hit) return false;
-
-    Vec3 toHit = hit->hitPos - hit->start;
-    Vec3 direction = target.obstructed ? hit->end.normalized()
-                                       : (toHit.magnitude() > 0.001f ? toHit.normalized() : hit->end.normalized());
-    if (direction.magnitude() <= 0.0001f) return false;
-
-    auto dist = target.box.intersectsRay(hit->start, direction, std::get<FloatValue>(range).value, 0.f);
-    if (!dist) return false;
-
-    outY = hit->start.y + direction.y * *dist;
-    return true;
 }
 
 Triggerbot::TargetSelection Triggerbot::pickTarget(float maxRange) {
@@ -456,12 +420,6 @@ bool Triggerbot::canFire(SDK::Actor* target) {
 }
 
 void Triggerbot::onUpdate(Event&) {
-    if (!std::get<BoolValue>(noRepeatPoint)) {
-        hasLastHit = false;
-        lastHitTarget = 0;
-        lastHitY = 0.f;
-    }
-
     auto ci = SDK::ClientInstance::get();
     if (!ci || !ci->minecraft || !ci->minecraftGame) return;
     if (!ci->minecraftGame->isCursorGrabbed()) return;
@@ -495,29 +453,6 @@ void Triggerbot::onUpdate(Event&) {
     }
 
     if (nextAttack < now - std::chrono::milliseconds(100)) nextAttack = now;
-
-    // No Repeat Point: hold fire until the crosshair has moved far enough vertically
-    // from the last hit on this target. Some servers drop a second hit in a band they
-    // already accepted one in, so firing again there wastes the click entirely.
-    //
-    // Only applies when this target is actually being hit as a ghost. The live model has
-    // no such restriction, so gating it there would throttle normal combat -- including
-    // mobs and any player with no lag record yet.
-    float aimY = 0.f;
-    bool haveAimY = false;
-    bool gateOnHeight = target.record != TargetRecord::Live && std::get<BoolValue>(noRepeatPoint);
-    if (gateOnHeight) {
-        haveAimY = currentAimHeight(target, aimY);
-        if (!haveAimY) {
-            nextAttack = now;
-            return;
-        }
-        uint64_t rid = target.actor->getRuntimeID();
-        if (hasLastHit && lastHitTarget == rid) {
-            float gap = std::clamp(std::get<FloatValue>(pointGap).value, 0.05f, 1.f);
-            if (std::abs(aimY - lastHitY) < gap) return;
-        }
-    }
 
     bool useMouse = target.record == TargetRecord::Backtrack ||
                     (target.record == TargetRecord::Live && !target.obstructed);
@@ -570,12 +505,6 @@ void Triggerbot::onUpdate(Event&) {
     } else if (!performDirectAttack(lp, target)) {
         nextAttack = now;
         return;
-    }
-
-    if (gateOnHeight && haveAimY) {
-        lastHitTarget = target.actor->getRuntimeID();
-        lastHitY = aimY;
-        hasLastHit = true;
     }
 
     float cpsVal = std::max(std::get<FloatValue>(cps).value, 1.f);

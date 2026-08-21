@@ -25,6 +25,7 @@
 #include "modules/game/Aimbot.h"
 #include "modules/game/Triggerbot.h"
 #include "modules/game/ShieldBreaker.h"
+#include "modules/game/Reach.h"
 #include "modules/game/NoFall.h"
 #include "modules/game/Fakelag.h"
 #include "modules/game/Backtrack.h"
@@ -103,6 +104,7 @@ ModuleManager::ModuleManager() {
     this->items.push_back(std::make_shared<Aimbot>());
     this->items.push_back(std::make_shared<Triggerbot>());
     this->items.push_back(std::make_shared<ShieldBreaker>());
+    this->items.push_back(std::make_shared<Reach>());
     this->items.push_back(std::make_shared<NoFall>());
     this->items.push_back(std::make_shared<Fakelag>());
     this->items.push_back(std::make_shared<Backtrack>());

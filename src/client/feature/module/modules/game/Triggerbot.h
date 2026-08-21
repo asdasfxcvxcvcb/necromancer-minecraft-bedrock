@@ -26,10 +26,6 @@ private:
     ValueType skipCritsIfKillable = BoolValue(true);
     // Fire at the backtrack ghost box instead of the live model.
     ValueType backtrackTarget = BoolValue(false);
-    // Refuse a second hit at the same height on one target: some servers drop a repeat
-    // at an already-used vertical band, so the crosshair has to move first.
-    ValueType noRepeatPoint = BoolValue(false);
-    ValueType pointGap = FloatValue(0.3f);
 
     enum class TargetRecord {
         Live,
@@ -62,10 +58,6 @@ private:
     std::chrono::steady_clock::time_point criticalWaitUntil {};
     bool criticalWaitActive = false;
     bool wasOnGround = true;
-    // Height of the last accepted hit, for the no-repeat rule.
-    uint64_t lastHitTarget = 0;
-    float lastHitY = 0.f;
-    bool hasLastHit = false;
     PendingAttack pendingAttack {};
     class Backtrack* backtrackModule = nullptr;
     bool backtrackResolved = false;
@@ -75,9 +67,6 @@ private:
     TargetSelection pickTarget(float maxRange);
     bool canFire(SDK::Actor* target);
     bool normalHitKills(SDK::Actor* target);
-    // Height at which the crosshair currently crosses the target. Uses the ghost box
-    // when backtrack targeting is on, since that is the box being hit.
-    bool currentAimHeight(TargetSelection const& target, float& outY);
     bool performDirectAttack(SDK::LocalPlayer* lp, TargetSelection const& target);
     Backtrack* resolveBacktrack();
     AfterTrack* resolveAfterTrack();

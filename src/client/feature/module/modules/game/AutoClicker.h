@@ -16,6 +16,7 @@ public:
 private:
     ValueType leftClick = BoolValue(true);
     ValueType blockBreak = BoolValue(true);
+    ValueType prioritizeAttack = BoolValue(false);
     ValueType cpsLeft = FloatValue(10.f);
     ValueType cpsLeftMin = FloatValue(7.f);
     ValueType cpsLeftMax = FloatValue(13.f);
@@ -37,5 +38,6 @@ private:
     float sampleCps(float fixed, float minVal, float maxVal);
     bool isHoldingBlock();
     bool isAimingAtBlock();
+    bool hasAttackableTarget();
     bool isPhysicallyHeld(int button);
 };

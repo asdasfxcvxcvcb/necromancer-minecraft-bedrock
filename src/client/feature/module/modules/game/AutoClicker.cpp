@@ -2,8 +2,12 @@
 #include "AutoClicker.h"
 
 #include "client/event/events/UpdateEvent.h"
+#include "client/misc/EntityCache.h"
+#include "client/misc/PlayerListManager.h"
 
 #include "mc/common/client/game/ClientInstance.h"
+#include "mc/common/world/actor/Actor.h"
+#include "mc/common/world/actor/player/Player.h"
 #include "mc/common/client/game/MouseDevice.h"
 #include "mc/common/client/game/MouseAction.h"
 #include "mc/common/client/player/LocalPlayer.h"
@@ -40,6 +44,12 @@ AutoClicker::AutoClicker()
                LocalizeString::get("client.module.autoClicker.leftClick.desc"), leftClick);
     addSetting("blockBreak", LocalizeString::get("client.module.autoClicker.blockBreak.name"),
                LocalizeString::get("client.module.autoClicker.blockBreak.desc"), blockBreak, "leftClick"_istrue);
+    addSetting("prioritizeAttack", LocalizeString::get("client.module.autoClicker.prioritizeAttack.name"),
+               LocalizeString::get("client.module.autoClicker.prioritizeAttack.desc"), prioritizeAttack,
+               Setting::Condition(std::vector<Setting::SingleCond> {
+                   { "leftClick", { 1 }, false },
+                   { "blockBreak", { 1 }, false },
+               }));
     auto cpsLeftSet = addSliderSetting("cpsLeft", LocalizeString::get("client.module.autoClicker.cpsLeft.name"),
                      LocalizeString::get("client.module.autoClicker.cpsLeft.desc"), cpsLeft, FloatValue(1.f),
                      FloatValue(25.f), FloatValue(1.f), leftFixedCond);
@@ -153,6 +163,37 @@ bool AutoClicker::isHoldingBlock() {
     return stack && stack->block != nullptr;
 }
 
+bool AutoClicker::hasAttackableTarget() {
+    auto clientInstance = SDK::ClientInstance::get();
+    if (!clientInstance || !clientInstance->minecraft) return false;
+    auto level = clientInstance->minecraft->getLevel();
+    if (!level) return false;
+    auto lp = clientInstance->getLocalPlayer();
+    if (!lp) return false;
+
+    auto hit = level->getHitResult();
+    if (!hit) return false;
+
+    Vec3 direction = hit->end.magnitude() > 0.0001f ? hit->end.normalized() : Vec3 { 0.f, 0.f, 0.f };
+    if (direction.magnitude() <= 0.0001f) return false;
+
+    float nearest = 6.f;
+    auto snap = EntityCache::get().snapshot();
+    for (auto const& view : snap->views) {
+        SDK::Actor* entt = view.actor;
+        if (!entt || entt == lp || !entt->aabbShape) continue;
+        if (view.isItem || !view.hasHealth || view.health <= 0.f) continue;
+        if (view.invisible) continue;
+        if (view.isPlayer && PlayerListManager::get().isFriend(reinterpret_cast<SDK::Player*>(entt)->playerName))
+            continue;
+
+        auto hitDist = entt->getBoundingBox().intersectsRay(hit->start, direction, nearest, 0.08f);
+        if (hitDist && *hitDist < nearest) return true;
+    }
+
+    return false;
+}
+
 bool AutoClicker::isPhysicallyHeld(int button) {
     int vk = button == 1 ? VK_LBUTTON : VK_RBUTTON;
     return (GetAsyncKeyState(vk) & 0x8000) != 0;
@@ -183,7 +224,8 @@ void AutoClicker::handleButton(int button, bool btnEnabled, float cpsFixed, floa
             return;
         }
 
-        if (std::get<BoolValue>(blockBreak) && isAimingAtBlock()) {
+        if (std::get<BoolValue>(blockBreak) && isAimingAtBlock() &&
+            !(std::get<BoolValue>(prioritizeAttack) && hasAttackableTarget())) {
             if (!leftBlockHeldByUs) {
                 pushAction(1, true);
                 leftBlockHeldByUs = true;

@@ -3,6 +3,7 @@
 
 #include "client/Necromancer.h"
 #include "client/event/events/TickEvent.h"
+#include "client/feature/module/modules/misc/LegitScaffold.h"
 #include "client/screen/ScreenManager.h"
 #include "mc/common/client/game/ClientInstance.h"
 #include "mc/common/client/player/LocalPlayer.h"
@@ -51,6 +52,17 @@ AutoBlock::AutoBlock()
                LocalizeString::get("client.module.autoBlock.sameBlockOnly.desc"), sameBlockOnly);
     addSetting("ignoreTnt", LocalizeString::get("client.module.autoBlock.ignoreTnt.name"),
                LocalizeString::get("client.module.autoBlock.ignoreTnt.desc"), ignoreTnt);
+    addSetting("scaffoldAware", LocalizeString::get("client.module.autoBlock.scaffoldAware.name"),
+               LocalizeString::get("client.module.autoBlock.scaffoldAware.desc"), scaffoldAware);
+}
+
+int AutoBlock::scaffoldHeadroom() {
+    if (!std::get<BoolValue>(scaffoldAware).value) return 0;
+
+    auto mod = Necromancer::getModuleManager().find("LegitScaffold");
+    if (!mod || !mod->isEnabled()) return 0;
+
+    return static_cast<LegitScaffold*>(mod.get())->blocksPerPlacement();
 }
 
 void AutoBlock::onTick(Event&) {
@@ -71,7 +83,7 @@ void AutoBlock::onTick(Event&) {
         return;
     }
 
-    int thr = static_cast<int>(std::get<FloatValue>(threshold).value);
+    int thr = static_cast<int>(std::get<FloatValue>(threshold).value) + scaffoldHeadroom();
     bool sameOnly = std::get<BoolValue>(sameBlockOnly);
     bool skipTnt = std::get<BoolValue>(ignoreTnt);
 
