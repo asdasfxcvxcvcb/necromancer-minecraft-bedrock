@@ -76,6 +76,9 @@ LegitScaffold::LegitScaffold()
     addSliderSetting("bridgeReach", LocalizeString::get("client.module.legitScaffold.bridgeReach.name"),
                      LocalizeString::get("client.module.legitScaffold.bridgeReach.desc"), bridgeReach, FloatValue(1.f),
                      FloatValue(5.f), FloatValue(0.5f), "speedBridge"_istrue);
+    addSetting("straightOnly", LocalizeString::get("client.module.legitScaffold.straightOnly.name"),
+               LocalizeString::get("client.module.legitScaffold.straightOnly.desc"), straightOnly,
+               "speedBridge"_istrue);
     addSliderSetting("bridgeDrop", LocalizeString::get("client.module.legitScaffold.bridgeDrop.name"),
                      LocalizeString::get("client.module.legitScaffold.bridgeDrop.desc"), bridgeDrop, FloatValue(0.f),
                      FloatValue(5.f), FloatValue(1.f), "speedBridge"_istrue);
@@ -119,7 +122,12 @@ LegitScaffold::LegitScaffold()
     addSetting("dirRight", LocalizeString::get("client.module.legitScaffold.dirRight.name"),
                LocalizeString::get("client.module.legitScaffold.dirRight.desc"), dirRight, dirCond);
     addSetting("dirDiagonalFill", LocalizeString::get("client.module.legitScaffold.dirDiagonalFill.name"),
-               LocalizeString::get("client.module.legitScaffold.dirDiagonalFill.desc"), dirDiagonalFill, dirCond);
+               LocalizeString::get("client.module.legitScaffold.dirDiagonalFill.desc"), dirDiagonalFill,
+               Setting::Condition(std::vector<Setting::SingleCond> {
+                   { "speedBridge", { 1 }, false },
+                   { "directionBased", { 1 }, false },
+                   { "straightOnly", { 0 }, false },
+               }));
     addSliderSetting("dirSimTicks", LocalizeString::get("client.module.legitScaffold.dirSimTicks.name"),
                      LocalizeString::get("client.module.legitScaffold.dirSimTicks.desc"), dirSimTicks, FloatValue(1.f),
                      FloatValue(20.f), FloatValue(1.f), dirCond);
@@ -193,10 +201,17 @@ Vec3 LegitScaffold::resolveBridgeDir(SDK::Player* plr) const {
     auto* lp = static_cast<SDK::LocalPlayer*>(plr);
     Vec3 camera = flatLookDir(lp->getRot());
 
-    if (!std::get<BoolValue>(directionBased).value) return camera;
+    auto snapAxis = [&](Vec3 dir) -> Vec3 {
+        if (!std::get<BoolValue>(straightOnly).value) return dir;
+        if (dir.x == 0.f && dir.z == 0.f) return dir;
+        if (fabsf(dir.x) >= fabsf(dir.z)) return { dir.x > 0.f ? 1.f : -1.f, 0.f, 0.f };
+        return { 0.f, 0.f, dir.z > 0.f ? 1.f : -1.f };
+    };
+
+    if (!std::get<BoolValue>(directionBased).value) return snapAxis(camera);
 
     auto* input = lp->getMoveInputComponent();
-    if (!input) return camera;
+    if (!input) return snapAxis(camera);
 
     auto const& raw = input->rawInputState;
     bool wantFwd = raw.up || raw.upLeft || raw.upRight;
@@ -276,7 +291,6 @@ Vec3 LegitScaffold::resolveBridgeDir(SDK::Player* plr) const {
             chosen = simulated;
         }
     }
-
     float blend = std::clamp(std::get<FloatValue>(dirBlendCamera).value, 0.f, 1.f);
     if (blend > 0.f) {
         chosen.x = chosen.x * (1.f - blend) + camera.x * blend;
@@ -287,7 +301,7 @@ Vec3 LegitScaffold::resolveBridgeDir(SDK::Player* plr) const {
         chosen.z /= len;
     }
 
-    return chosen;
+    return snapAxis(chosen);
 }
 
 void LegitScaffold::collectUnderCandidate(SDK::Player* plr, SDK::BlockSource* region, int placeY,
@@ -320,6 +334,7 @@ void LegitScaffold::collectCandidates(SDK::Player* plr, SDK::BlockSource* region
     auto* lp = static_cast<SDK::LocalPlayer*>(plr);
     Vec3 feet = feetPos(lp);
     Vec3 forward = resolveBridgeDir(plr);
+    if (forward.x == 0.f && forward.z == 0.f) forward = flatLookDir(lp->getRot());
     if (forward.x == 0.f && forward.z == 0.f) return;
 
     float reach = std::get<FloatValue>(bridgeReach).value;
@@ -345,7 +360,10 @@ void LegitScaffold::collectCandidates(SDK::Player* plr, SDK::BlockSource* region
             float sz = static_cast<float>(support.z) + 0.5f;
             float toSupportX = sx - feet.x;
             float toSupportZ = sz - feet.z;
-            if (toSupportX * forward.x + toSupportZ * forward.z < 0.f) return;
+            float len = sqrtf(toSupportX * toSupportX + toSupportZ * toSupportZ);
+            if (len > 1.5f) {
+                if ((toSupportX / len) * forward.x + (toSupportZ / len) * forward.z < -0.35f) return;
+            }
         }
 
         out.push_back(Candidate { support, face });
@@ -354,7 +372,9 @@ void LegitScaffold::collectCandidates(SDK::Player* plr, SDK::BlockSource* region
     BlockPos under { floori(feet.x), placeY, floori(feet.z) };
     addCandidate(under);
 
-    bool diagonalFill = std::get<BoolValue>(directionBased).value && std::get<BoolValue>(dirDiagonalFill).value;
+    bool diagonalFill = std::get<BoolValue>(directionBased).value &&
+                        std::get<BoolValue>(dirDiagonalFill).value &&
+                        !std::get<BoolValue>(straightOnly).value;
 
     float step = 0.25f;
     BlockPos lastTried = under;
@@ -414,7 +434,7 @@ void LegitScaffold::onTick(Event&) {
     if (!region) return;
 
     Vec3 feet = feetPos(plr);
-    int standY = floori(feet.y - 0.05f);
+    int standY = floori(feet.y + 0.001f) - 1;
     bool onGround = plr->isOnGround();
     bool doAllowUp = std::get<BoolValue>(allowUp).value;
     Vec3 velocity = plr->getVelocity();

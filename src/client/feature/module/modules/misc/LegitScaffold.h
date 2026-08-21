@@ -31,6 +31,7 @@ private:
     ValueType allowUp = BoolValue(true);
     ValueType speedBridge = BoolValue(true);
     ValueType bridgeReach = FloatValue(3.f);
+    ValueType straightOnly = BoolValue(false);
     ValueType bridgeDrop = FloatValue(2.f);
     ValueType bridgeDelay = FloatValue(55.f);
     ValueType bridgeBlocksPerTick = FloatValue(2.f);

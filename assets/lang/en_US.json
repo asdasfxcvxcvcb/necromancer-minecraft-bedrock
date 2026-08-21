@@ -780,6 +780,8 @@
         "client.module.legitScaffold.requireMoving.name": "Require Movement",
         "client.module.legitScaffold.speedBridge.desc": "Keeps placing blocks ahead of your feet while you walk, even when your crosshair is pointing at air or somewhere else entirely.",
         "client.module.legitScaffold.speedBridge.name": "Speed Bridging",
+        "client.module.legitScaffold.straightOnly.desc": "Only bridge straight along one axis. Your direction is snapped to the nearest of north, south, east or west, so the bridge never runs diagonally.",
+        "client.module.legitScaffold.straightOnly.name": "Build Only In Straight Lines",
         "client.module.movableScoreboard.desc": "Makes the scoreboard movable.",
         "client.module.movableScoreboard.name": "Movable Scoreboard",
         "client.module.nickname.desc": "Makes your username appear as something else in Minecraft chat",
